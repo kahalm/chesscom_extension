@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RepCheck — Opening Repertoire Deviation Checker
 // @namespace    https://github.com/kahalm/repcheck
-// @version      1.33.0
+// @version      1.34.0
 // @require      https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js
 // @description  Shows where your game deviates from your opening repertoire (chess.com + lichess, PGN files or RookHub). On chessable.com: copy/search FEN, remember a line to RookHub, show earned XP, report active training time to RookHub, read the API token.
 // @author       kahalm
@@ -1976,7 +1976,7 @@
     window.__repcheckChessableActivity = true;
 
     const TICK_MS = 5000, IDLE_MS = 60000, FLUSH_MS = 60000, MIN_FLUSH_MS = 10000, MAX_FLUSH_S = 3600;
-    let activeMs = 0, movesTrained = 0, lastActivity = 0, lastFlush = Date.now();
+    let activeMs = 0, movesTrained = 0, linesTrained = 0, lastActivity = 0, lastFlush = Date.now();
     let courseKind = null, lookedUpCourseId = null;
 
     const now = () => Date.now();
@@ -1986,19 +1986,34 @@
     document.addEventListener('pointerdown', () => { if (boardPresent()) bump(); }, true);
     document.addEventListener('keydown', () => { if (boardPresent()) bump(); }, true);
 
-    let notifObserver = null, watchedNotif = null;
+    // Abgeschlossene LINIEN: ein Klick auf Chessables „Next variation" (dt. „Nächste Variante")
+    // = eine fertig trainierte Linie. Bewusst NICHT das nackte „Next" (Learn-Modus blättert damit Zuege).
+    const NEXT_VARIATION_RE = /^(next\s+variation|n(ä|ae)chste\s+variante)$/i;
+    document.addEventListener('click', (e) => {
+      const btn = e.target && e.target.closest && e.target.closest('button, a, [role="button"]');
+      if (!btn) return;
+      const t = (btn.textContent || '').replace(/\s+/g, ' ').trim();
+      if (NEXT_VARIATION_RE.test(t)) { linesTrained++; bump(); }
+    }, true);
+
+    // Jede neue Benachrichtigung = EIN gewerteter Zug; Observer am Eltern-Knoten (uebersteht
+    // React-Node-Austausch) + Zeitfenster-Dedupe. Frueher (nur Text "XP", Observer am Knoten
+    // selbst) wurden ~80-90 % der Zuege verschluckt.
+    let notifObserver = null, watchedNotifParent = null, lastMoveCountAt = 0;
     function watchMoveNotif() {
       const n = document.querySelector('[data-testid="moveNotification"]');
-      if (!n || watchedNotif === n) return;
+      const parent = n && n.parentElement;
+      if (!parent || watchedNotifParent === parent) return;
       notifObserver?.disconnect();
-      watchedNotif = n;
+      watchedNotifParent = parent;
       notifObserver = new MutationObserver(() => {
-        const t = n.textContent.trim();
+        const cur = document.querySelector('[data-testid="moveNotification"]');
+        const t = cur ? cur.textContent.trim() : '';
         if (!t) return;
         bump();
-        if (t === 'XP') movesTrained++;
+        if (now() - lastMoveCountAt > 800) { movesTrained++; lastMoveCountAt = now(); }
       });
-      notifObserver.observe(n, { childList: true, characterData: true, subtree: true });
+      notifObserver.observe(parent, { childList: true, characterData: true, subtree: true });
     }
 
     let boardObserver = null, watchedBoard = null;
@@ -2140,10 +2155,11 @@
 
       const cfg = readConfig();
       lastFlush = now();
-      if (!cfg || !cfg.url || !cfg.token) { activeMs = 0; movesTrained = 0; return; }
+      if (!cfg || !cfg.url || !cfg.token) { activeMs = 0; movesTrained = 0; linesTrained = 0; return; }
 
       const moves = movesTrained;
-      activeMs = 0; movesTrained = 0;
+      const lines = linesTrained;
+      activeMs = 0; movesTrained = 0; linesTrained = 0;
       const url = String(cfg.url).replace(/\/$/, '') + '/api/extension/training-activity';
       fetch(url, {
         method: 'POST',
@@ -2154,10 +2170,10 @@
           'Accept': 'application/json',
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ secondsActive: secs, movesTrained: moves, courseKind, courseId: currentCourseId(), courseName: bestCourseName() }),
+        body: JSON.stringify({ secondsActive: secs, movesTrained: moves, linesTrained: lines, courseKind, courseId: currentCourseId(), courseName: bestCourseName() }),
       }).then((resp) => {
-        if (!resp.ok) { activeMs += secs * 1000; movesTrained += moves; }
-      }).catch(() => { activeMs += secs * 1000; movesTrained += moves; });
+        if (!resp.ok) { activeMs += secs * 1000; movesTrained += moves; linesTrained += lines; }
+      }).catch(() => { activeMs += secs * 1000; movesTrained += moves; linesTrained += lines; });
     }
 
     courseNameApi.ensureCourseNames(false); // Kursname-Karte vorwärmen

@@ -26,6 +26,7 @@
 
   let activeMs = 0;
   let movesTrained = 0;
+  let linesTrained = 0;        // abgeschlossene Linien (Klick auf „Next variation")
   let lastActivity = 0;
   let lastFlush = Date.now();
   let courseKind = null;       // RepertoireKind (vom Server, z. B. "Opening") oder null = unbekannt
@@ -41,20 +42,37 @@
   document.addEventListener('pointerdown', () => { if (boardPresent()) bump(); }, true);
   document.addEventListener('keydown', () => { if (boardPresent()) bump(); }, true);
 
-  // Gewertete Zuege: <span data-testid="moveNotification">; Text "XP" = abgeschlossener Zug.
-  let notifObserver = null, watchedNotif = null;
+  // Abgeschlossene LINIEN zaehlen: nach dem Ende einer Variante zeigt Chessable den
+  // „Next variation"-Knopf (dt. „Nächste Variante") — genau EIN Klick darauf = eine Linie.
+  // Bewusst NICHT das nackte „Next" (das blättert im Learn-Modus jeden Zug weiter).
+  const NEXT_VARIATION_RE = /^(next\s+variation|n(ä|ae)chste\s+variante)$/i;
+  document.addEventListener('click', (e) => {
+    const btn = e.target && e.target.closest && e.target.closest('button, a, [role="button"]');
+    if (!btn) return;
+    const t = (btn.textContent || '').replace(/\s+/g, ' ').trim();
+    if (NEXT_VARIATION_RE.test(t)) { linesTrained++; bump(); }
+  }, true);
+
+  // Gewertete Zuege: <span data-testid="moveNotification"> — jede neue Benachrichtigung ist EIN
+  // gewerteter Zug (richtig/falsch/overstudied). Frueher zaehlte nur der exakte Text "XP" und der
+  // Observer hing am (von React ersetzten) Notification-Knoten selbst → massiver Undercount
+  // (~1-2 Zuege/Minute statt real ~10). Jetzt: Observer am ELTERN-Knoten (uebersteht den
+  // Node-Austausch) + Zeitfenster-Dedupe (max. 1 Zug je 800 ms gegen gebuendelte Mutationen).
+  let notifObserver = null, watchedNotifParent = null, lastMoveCountAt = 0;
   function watchMoveNotif() {
     const n = document.querySelector('[data-testid="moveNotification"]');
-    if (!n || watchedNotif === n) return;
+    const parent = n && n.parentElement;
+    if (!parent || watchedNotifParent === parent) return;
     notifObserver?.disconnect();
-    watchedNotif = n;
+    watchedNotifParent = parent;
     notifObserver = new MutationObserver(() => {
-      const t = n.textContent.trim();
+      const cur = document.querySelector('[data-testid="moveNotification"]');
+      const t = cur ? cur.textContent.trim() : '';
       if (!t) return;
       bump();
-      if (t === 'XP') movesTrained++;
+      if (now() - lastMoveCountAt > 800) { movesTrained++; lastMoveCountAt = now(); }
     });
-    notifObserver.observe(n, { childList: true, characterData: true, subtree: true });
+    notifObserver.observe(parent, { childList: true, characterData: true, subtree: true });
   }
 
   // Brett-Mutationen (Figur bewegt) = harter Aktivitaetsnachweis.
@@ -105,18 +123,33 @@
     bridgedCourseName = (typeof name === 'string' && name.trim()) ? name.trim().slice(0, 200) : null;
   });
 
+  // Navigations-/Modus-Labels, die KEIN Kursname sind (füllten historisch die Statistik mit
+  // „Practice Moves"/„Learn Moves"-Müll). Gleiche Logik wie isNavLabel im Userscript/fen.js.
+  function isNavLabel(txt) {
+    const t = String(txt || '').toLowerCase().trim();
+    if (/^(practice( moves)?|learn( moves)?|review|overview|variations?|move ?trainer|next|previous|prev|continue|weiter|home|leaderboard)$/.test(t)) return true;
+    if (/^(next|previous|prev|nächst\w*|naechst\w*|vorherig\w*|vorig\w*|letzt\w*)\b/.test(t)
+        && /(chapter|variation|move|line|kapitel|variante|zug|linie)/.test(t)) return true;
+    if (/^(kapitel|chapter)\s*\d*\s*:?$/.test(t)) return true;
+    return false;
+  }
+
   // Lesbarer Kursname (Fallback, falls die MAIN-World-Bridge noch nichts gespiegelt hat).
+  // Modus-/Nav-Labels werden verworfen — lieber KEIN Name (der Server heilt über die Kurs-ID)
+  // als ein falscher.
   function currentCourseName() {
-    if (bridgedCourseName) return bridgedCourseName;
+    if (bridgedCourseName && !isNavLabel(bridgedCourseName)) return bridgedCourseName;
     const id = currentCourseId();
     if (id) {
+      const candidates = [];
       for (const a of document.querySelectorAll('a[href*="/course/' + id + '/"]')) {
-        const txt = (a.textContent || '').trim();
-        if (txt && txt.length <= 200) return txt;
+        const txt = (a.textContent || '').replace(/\s+/g, ' ').trim();
+        if (txt && txt.length <= 200 && !isNavLabel(txt)) candidates.push(txt);
       }
+      if (candidates.length) return candidates.sort((a, b) => b.length - a.length)[0];
     }
     const t = (document.title || '').replace(/\s*[|\-–]\s*Chessable.*$/i, '').trim();
-    return t || null;
+    return (t && !isNavLabel(t)) ? t : null;
   }
 
   // ---- Autoritativer Kursname über den Chessable-Bearer ----
@@ -227,7 +260,9 @@
 
   // Bester verfügbarer Name: Chessable-API (autoritativ) > MAIN-World-DOM-Bridge > lokale Heuristik.
   function bestCourseName(courseId) {
-    return apiCourseName(courseId) || bridgedCourseName || currentCourseName();
+    return apiCourseName(courseId)
+      || (bridgedCourseName && !isNavLabel(bridgedCourseName) ? bridgedCourseName : null)
+      || currentCourseName();
   }
 
   // Einmalig pro Kurs-ID: fragt RookHub-Repertoires ab und sucht den passenden Kind-Wert.
@@ -268,12 +303,13 @@
     lastFlush = now();
     if (!cfg || !cfg.url || !cfg.token) {
       // Nicht mit RookHub verbunden → akkumulierte Zeit verwerfen (kein unbegrenztes Wachsen).
-      activeMs = 0; movesTrained = 0;
+      activeMs = 0; movesTrained = 0; linesTrained = 0;
       return;
     }
 
     const moves = movesTrained;
-    activeMs = 0; movesTrained = 0; // optimistisch zuruecksetzen
+    const lines = linesTrained;
+    activeMs = 0; movesTrained = 0; linesTrained = 0; // optimistisch zuruecksetzen
     const baseUrl = String(cfg.url).replace(/\/$/, '');
     try {
       chrome.runtime.sendMessage({
@@ -285,18 +321,20 @@
           'Content-Type': 'application/json',
           'Accept': 'application/json',
         },
-        body: JSON.stringify({ secondsActive: secs, movesTrained: moves, courseKind, courseId: currentCourseId(), courseName: bestCourseName(currentCourseId()) }),
+        body: JSON.stringify({ secondsActive: secs, movesTrained: moves, linesTrained: lines, courseKind, courseId: currentCourseId(), courseName: bestCourseName(currentCourseId()) }),
         expect: 'json',
       }, (resp) => {
         if (chrome.runtime.lastError || !resp || !resp.ok) {
-          // Fehlgeschlagen → Zeit/Zuege zurueckbuchen, damit nichts verloren geht.
+          // Fehlgeschlagen → Zeit/Zuege/Linien zurueckbuchen, damit nichts verloren geht.
           activeMs += secs * 1000;
           movesTrained += moves;
+          linesTrained += lines;
         }
       });
     } catch (e) {
       activeMs += secs * 1000;
       movesTrained += moves;
+      linesTrained += lines;
     }
   }
 
