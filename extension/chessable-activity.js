@@ -44,13 +44,47 @@
 
   // Abgeschlossene LINIEN zaehlen: nach dem Ende einer Variante zeigt Chessable den
   // „Next variation"-Knopf (dt. „Nächste Variante") — genau EIN Klick darauf = eine Linie.
-  // Bewusst NICHT das nackte „Next" (das blättert im Learn-Modus jeden Zug weiter).
-  const NEXT_VARIATION_RE = /^(next\s+variation|n(ä|ae)chste\s+variante)$/i;
+  // TEILSTRING-Match (nicht verankert): der Knopf traegt oft Zusatztext (Tastatur-Hinweis,
+  // Icon-Label) — ein exakter Match verfehlte ihn in der Praxis (linesTrained blieb 0).
+  // Laengen-Deckel, damit kein grosser Container mit zufaellig enthaltenem Text zaehlt.
+  // Bewusst NICHT das nackte „Next" (das blaettert im Learn-Modus jeden Zug weiter).
+  const NEXT_VARIATION_RE = /next\s+variation|n(ä|ae)chste\s+variante/i;
+  const isNextVariationButton = (el) => {
+    const t = (el.textContent || '').replace(/\s+/g, ' ').trim();
+    if (t.length > 0 && t.length <= 60 && NEXT_VARIATION_RE.test(t)) return true;
+    const aria = el.getAttribute && (el.getAttribute('aria-label') || '');
+    return !!aria && NEXT_VARIATION_RE.test(aria);
+  };
+  // Gemeinsames Dedupe-Fenster fuer Klick UND Taste: loest die Leertaste den Knopf doch als
+  // echten Klick aus, zaehlt das Paar trotzdem nur EINE Linie.
+  let lastLineCountAt = 0;
+  function countLine() {
+    if (now() - lastLineCountAt < 1500) return;
+    lastLineCountAt = now();
+    linesTrained++;
+    bump();
+  }
   document.addEventListener('click', (e) => {
     const btn = e.target && e.target.closest && e.target.closest('button, a, [role="button"]');
     if (!btn) return;
-    const t = (btn.textContent || '').replace(/\s+/g, ' ').trim();
-    if (NEXT_VARIATION_RE.test(t)) { linesTrained++; bump(); }
+    if (isNextVariationButton(btn)) countLine();
+  }, true);
+  // Chessable springt per LEERTASTE (globaler Shortcut, KEIN click-Event) zur naechsten Variante —
+  // der Haupt-Workflow. Space/Enter zaehlen, wenn ein sichtbarer „Next variation"-Knopf existiert
+  // (also der Abschluss-/Navigations-Zustand da ist) und keine Eingabe fokussiert ist.
+  function nextVariationButtonVisible() {
+    for (const el of document.querySelectorAll('button, a, [role="button"]')) {
+      if (!isNextVariationButton(el)) continue;
+      const r = el.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) return true;
+    }
+    return false;
+  }
+  document.addEventListener('keydown', (e) => {
+    if (e.code !== 'Space' && e.code !== 'Enter' && e.code !== 'NumpadEnter') return;
+    const t = e.target;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+    if (nextVariationButtonVisible()) countLine();
   }, true);
 
   // Gewertete Zuege: <span data-testid="moveNotification"> — jede neue Benachrichtigung ist EIN
@@ -99,15 +133,23 @@
   // Kurs-ID ermitteln. In der isolierten Welt ist der React-Fiber NICHT lesbar und
   // die Practice-URL (/practice/…) traegt keine Kurs-ID — daher bevorzugt die von
   // chessable-fen.js (MAIN-World) gespiegelte ID, sonst URL- bzw. Link-Heuristik.
+  let stickyCourseId = null;  // letzte sicher erkannte Kurs-ID der Sitzung (SPA-Luecken ueberbruecken)
   function currentCourseId() {
-    if (bridgedCourseId) return bridgedCourseId;
-    const m = /\/courses?\/(\d+)(?:\/|$)/.exec(location.pathname);
-    if (m) return m[1];
-    for (const a of document.querySelectorAll('a[href*="/course/"]')) {
-      const am = /\/course\/(\d+)(?:\/|$)/.exec(a.getAttribute('href') || '');
-      if (am) return am[1];
-    }
-    return null;
+    const direct = (() => {
+      if (bridgedCourseId) return bridgedCourseId;
+      const m = /\/courses?\/(\d+)(?:\/|$)/.exec(location.pathname);
+      if (m) return m[1];
+      for (const a of document.querySelectorAll('a[href*="/course/"]')) {
+        const am = /\/course\/(\d+)(?:\/|$)/.exec(a.getAttribute('href') || '');
+        if (am) return am[1];
+      }
+      return null;
+    })();
+    // Sticky: auf der Practice-Seite verschwinden die Kurs-Links je nach SPA-Zustand — dann galt
+    // die Minute bisher als „ohne Kurs" (~60 % der Haeppchen). Die zuletzt erkannte ID bleibt
+    // gueltig, bis eine ANDERE erkannt wird; gezaehlt wird ohnehin nur bei vorhandenem Brett.
+    if (direct) stickyCourseId = direct;
+    return direct || stickyCourseId;
   }
 
   // chessable-fen.js (MAIN-World) spiegelt die per React-Fiber aufgeloeste Kurs-ID hierher.

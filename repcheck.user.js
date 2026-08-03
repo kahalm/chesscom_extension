@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RepCheck — Opening Repertoire Deviation Checker
 // @namespace    https://github.com/kahalm/repcheck
-// @version      1.34.0
+// @version      1.34.1
 // @require      https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js
 // @description  Shows where your game deviates from your opening repertoire (chess.com + lichess, PGN files or RookHub). On chessable.com: copy/search FEN, remember a line to RookHub, show earned XP, report active training time to RookHub, read the API token.
 // @author       kahalm
@@ -1988,12 +1988,42 @@
 
     // Abgeschlossene LINIEN: ein Klick auf Chessables „Next variation" (dt. „Nächste Variante")
     // = eine fertig trainierte Linie. Bewusst NICHT das nackte „Next" (Learn-Modus blättert damit Zuege).
-    const NEXT_VARIATION_RE = /^(next\s+variation|n(ä|ae)chste\s+variante)$/i;
+    // TEILSTRING-Match: der Knopf traegt oft Zusatztext (Tastatur-Hinweis) — exakter Match
+    // verfehlte ihn in der Praxis. Laengen-Deckel gegen grosse Container.
+    const NEXT_VARIATION_RE = /next\s+variation|n(ä|ae)chste\s+variante/i;
+    const isNextVariationButton = (el) => {
+      const t = (el.textContent || '').replace(/\s+/g, ' ').trim();
+      if (t.length > 0 && t.length <= 60 && NEXT_VARIATION_RE.test(t)) return true;
+      const aria = el.getAttribute && (el.getAttribute('aria-label') || '');
+      return !!aria && NEXT_VARIATION_RE.test(aria);
+    };
+    // Gemeinsames Dedupe-Fenster fuer Klick UND Taste (Space kann den Knopf doch klicken → 1 Linie).
+    let lastLineCountAt = 0;
+    function countLine() {
+      if (now() - lastLineCountAt < 1500) return;
+      lastLineCountAt = now();
+      linesTrained++;
+      bump();
+    }
     document.addEventListener('click', (e) => {
       const btn = e.target && e.target.closest && e.target.closest('button, a, [role="button"]');
       if (!btn) return;
-      const t = (btn.textContent || '').replace(/\s+/g, ' ').trim();
-      if (NEXT_VARIATION_RE.test(t)) { linesTrained++; bump(); }
+      if (isNextVariationButton(btn)) countLine();
+    }, true);
+    // Leertaste = Haupt-Workflow zum Weiterspringen (globaler Shortcut, KEIN click-Event).
+    function nextVariationButtonVisible() {
+      for (const el of document.querySelectorAll('button, a, [role="button"]')) {
+        if (!isNextVariationButton(el)) continue;
+        const r = el.getBoundingClientRect();
+        if (r.width > 0 && r.height > 0) return true;
+      }
+      return false;
+    }
+    document.addEventListener('keydown', (e) => {
+      if (e.code !== 'Space' && e.code !== 'Enter' && e.code !== 'NumpadEnter') return;
+      const t = e.target;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      if (nextVariationButtonVisible()) countLine();
     }, true);
 
     // Jede neue Benachrichtigung = EIN gewerteter Zug; Observer am Eltern-Knoten (uebersteht
@@ -2050,21 +2080,26 @@
       }
       return null;
     }
+    let stickyCourseId = null;  // letzte sicher erkannte Kurs-ID (SPA-Luecken ueberbruecken)
     function currentCourseId() {
-      const urlM = /\/courses?\/(\d+)(?:\/|$)/.exec(location.pathname);
-      if (urlM) return urlM[1];
-      for (const a of document.querySelectorAll('a[href*="/course/"]')) {
-        const m = /\/course\/(\d+)(?:\/|$)/.exec(a.getAttribute('href') || '');
-        if (m) return m[1];
-      }
-      const anchor = document.getElementById('board') || document.querySelector('[data-square]');
-      let fiber = getReactFiber(anchor), depth = 0;
-      while (fiber && depth < 60) {
-        const id = fiberCourseId(fiber.memoizedProps) || fiberCourseId(fiber.pendingProps);
-        if (id) return id;
-        fiber = fiber.return; depth++;
-      }
-      return null;
+      const direct = (() => {
+        const urlM = /\/courses?\/(\d+)(?:\/|$)/.exec(location.pathname);
+        if (urlM) return urlM[1];
+        for (const a of document.querySelectorAll('a[href*="/course/"]')) {
+          const m = /\/course\/(\d+)(?:\/|$)/.exec(a.getAttribute('href') || '');
+          if (m) return m[1];
+        }
+        const anchor = document.getElementById('board') || document.querySelector('[data-square]');
+        let fiber = getReactFiber(anchor), depth = 0;
+        while (fiber && depth < 60) {
+          const id = fiberCourseId(fiber.memoizedProps) || fiberCourseId(fiber.pendingProps);
+          if (id) return id;
+          fiber = fiber.return; depth++;
+        }
+        return null;
+      })();
+      if (direct) stickyCourseId = direct;
+      return direct || stickyCourseId;
     }
 
     // Navigations-/UI-Linktexte auf der Practice-/Learn-Seite, die KEIN Kursname sind
