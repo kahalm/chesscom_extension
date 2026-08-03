@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RepCheck — Opening Repertoire Deviation Checker
 // @namespace    https://github.com/kahalm/repcheck
-// @version      1.35.0
+// @version      1.36.0
 // @require      https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js
 // @description  Shows where your game deviates from your opening repertoire (chess.com + lichess, PGN files or RookHub). On chessable.com: copy/search FEN, remember a line to RookHub, show earned XP, report active training time to RookHub, read the API token.
 // @author       kahalm
@@ -1543,6 +1543,62 @@
 
     // --- Config/Token/Kurs-ID ---
     function getCfg() { try { if (typeof GM_getValue !== 'undefined') return GM_getValue('rookhubConfig', null); } catch (e) {} return null; }
+
+    // ===== „Schwierige Züge" ernten (Spiegel von extension/chessable-activity.js) =====
+    // getList: nHard je Linie; getGame: problemMoves.thisUser + lastReviewed. Batch + Dedupe,
+    // Egress direkter fetch (RookHub-ExtensionPolicy erlaubt chessable.com).
+    const problemPending = new Map(); const problemSent = new Map();
+    let problemFlushTimer = null;
+    function queueProblemEntry(bid, entry) {
+      if (!bid || !entry || !entry.oid) return;
+      const key = bid + '|' + entry.oid;
+      const prev = problemPending.get(key);
+      const merged = prev ? Object.assign({}, prev.entry, entry) : entry;
+      if (problemSent.get(key) === JSON.stringify(merged)) return;
+      problemPending.set(key, { bid, entry: merged });
+      if (!problemFlushTimer) problemFlushTimer = setTimeout(flushProblemMoves, 15000);
+    }
+    function flushProblemMoves() {
+      problemFlushTimer = null;
+      if (!problemPending.size) return;
+      const cfg = getCfg();
+      if (!cfg || !cfg.url || !cfg.token) { problemPending.clear(); return; }
+      const byBid = new Map();
+      for (const [key, v] of problemPending) {
+        if (!byBid.has(v.bid)) byBid.set(v.bid, []);
+        const bucket = byBid.get(v.bid);
+        if (bucket.length < 400) { bucket.push([key, v.entry]); problemPending.delete(key); }
+      }
+      for (const [bid, items] of byBid) {
+        fetch(String(cfg.url).replace(/\/$/, '') + '/api/extension/chessable/problem-moves', {
+          method: 'POST', mode: 'cors',
+          headers: { 'Authorization': 'Bearer ' + cfg.token, 'Accept': 'application/json', 'Content-Type': 'application/json' },
+          body: JSON.stringify({ bid, entries: items.map(([, e]) => e) }),
+        }).then(r => { if (r.ok) for (const [key, e] of items) problemSent.set(key, JSON.stringify(e)); }).catch(() => {});
+      }
+      if (problemPending.size && !problemFlushTimer) problemFlushTimer = setTimeout(flushProblemMoves, 15000);
+    }
+    function harvestFromList(bid, body) {
+      let o; try { o = JSON.parse(body); } catch (e) { return; }
+      const l = o && (o.list || o.List); const data = l && (l.data || l.Data);
+      if (!Array.isArray(data)) return;
+      for (const item of data) {
+        const oid = item && item.id != null ? String(item.id) : null;
+        if (!oid || typeof item.nHard !== 'number') continue;
+        queueProblemEntry(bid, { oid, nHard: item.nHard });
+      }
+    }
+    function harvestFromGame(bid, oid, body) {
+      let o; try { o = JSON.parse(body); } catch (e) { return; }
+      const g = o && (o.game || o.Game);
+      if (!g || !oid) return;
+      let tu = g.problemMoves && g.problemMoves.thisUser;
+      if (!tu || Array.isArray(tu)) tu = {};   // leeres Array = keine Fehlzüge → {} (löscht alte)
+      const entry = { oid: String(oid), problemMoves: tu };
+      if (typeof g.lastReviewed === 'string') entry.lastReviewed = g.lastReviewed.slice(0, 40);
+      queueProblemEntry(bid, entry);
+    }
+    window.addEventListener('pagehide', flushProblemMoves);
     function b64urlDecode(s) { s = String(s).replace(/-/g, '+').replace(/_/g, '/'); while (s.length % 4) s += '='; return atob(s); }
     function decodeUid(token) { try { const parts = String(token).split('.'); if (parts.length < 2) return null; const o = JSON.parse(b64urlDecode(parts[1])); const uid = o && o.user && o.user.uid; return (uid != null && /^\d+$/.test(String(uid))) ? String(uid) : null; } catch (e) { return null; } }
     function getToken() { try { return extractJwt(localStorage.getItem(lsKey)); } catch (e) { return null; } }
@@ -1565,12 +1621,13 @@
       const info = classifyApi(url);
       if (!info || cap.bytes + body.length > CAP_MAX) return;
       if (info.kind === 'course') { const bid = info.bid || currentCourseId(); if (bid && bid !== cap.bid) resetCap(bid); if (!cap.bid) cap.bid = bid || null; cap.courseText = body; cap.bytes += body.length; }
-      else if (info.kind === 'list') { if (info.bid && info.bid !== cap.bid) resetCap(info.bid); if (!cap.bid && info.bid) cap.bid = info.bid; if (info.lid != null) { cap.lists[info.lid] = body; cap.bytes += body.length; for (const oid of parseLineOids(body)) cap.oidToLid[oid] = info.lid; } }
+      else if (info.kind === 'list') { if (info.bid && info.bid !== cap.bid) resetCap(info.bid); if (!cap.bid && info.bid) cap.bid = info.bid; if (info.lid != null) { cap.lists[info.lid] = body; cap.bytes += body.length; for (const oid of parseLineOids(body)) cap.oidToLid[oid] = info.lid; } harvestFromList(info.bid || cap.bid || currentCourseId(), body); }
       else if (info.kind === 'game') {
         if (info.oid != null && !cap.games[info.oid]) { cap.games[info.oid] = body; cap.bytes += body.length; }
         // Trainings-Signal für initChessableActivityTracking (eigene Closure): zuletzt geladene
         // Linie = gerade trainierte Linie. Während eines aktiven Crawls wertlos → nicht spiegeln.
         if (!crawling && info.oid != null) window.__repcheckLastGameOid = { oid: String(info.oid), at: Date.now() };
+        harvestFromGame(cap.bid || currentCourseId(), info.oid, body);
       }
       updatePanel();
       if (autoImport) scheduleAutoImport();

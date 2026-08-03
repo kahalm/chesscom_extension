@@ -431,7 +431,7 @@
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') flush(true);
   });
-  window.addEventListener('pagehide', () => flush(true));
+  window.addEventListener('pagehide', () => { flush(true); flushProblemMoves(); });
 
   // ---- „Remember line"-Bridge (MAIN-World chessable-fen.js → hier → RookHub) ----
   // chessable-fen.js (Page-Kontext) postet die FEN; hier (isoliert) haengen
@@ -530,6 +530,88 @@
 
   function resetCap(bid) { cap.bid = bid; cap.courseText = null; cap.lists = {}; cap.oidToLid = {}; cap.games = {}; cap.bytes = 0; }
 
+  // ===== „Schwierige Züge" ernten =====================================================
+  // Die ohnehin mitgeschnittenen Antworten tragen User-Trainingszustand: getList je Linie
+  // `nHard`, getGame `game.problemMoves.thisUser` (Fehlzüge je Ply) + `lastReviewed`. Beides
+  // wird gebündelt an RookHub gemeldet (POST /api/extension/chessable/problem-moves) und dort
+  // je (User, bid, oid) upsertet. Batch + Session-Dedupe halten den Traffic klein; best-effort.
+  const problemPending = new Map();   // `${bid}|${oid}` → { bid, entry }
+  const problemSent = new Map();      // gleicher Key → zuletzt gesendete Payload (JSON-String)
+  let problemFlushTimer = null;
+
+  function queueProblemEntry(bid, entry) {
+    if (!bid || !entry || !entry.oid) return;
+    const key = bid + '|' + entry.oid;
+    const prev = problemPending.get(key);
+    const merged = prev ? Object.assign({}, prev.entry, entry) : entry;
+    const payload = JSON.stringify(merged);
+    if (problemSent.get(key) === payload) return;   // unverändert → nichts senden
+    problemPending.set(key, { bid, entry: merged });
+    if (!problemFlushTimer) problemFlushTimer = setTimeout(flushProblemMoves, 15000);
+  }
+
+  async function flushProblemMoves() {
+    problemFlushTimer = null;
+    if (!problemPending.size) return;
+    const cfg = await readConfig();
+    if (!cfg || !cfg.url || !cfg.token) { problemPending.clear(); return; }
+    const baseUrl = String(cfg.url).replace(/\/$/, '');
+    // je bid ein Batch (max 400 Einträge — Rest im nächsten Flush)
+    const byBid = new Map();
+    for (const [key, v] of problemPending) {
+      if (!byBid.has(v.bid)) byBid.set(v.bid, []);
+      const bucket = byBid.get(v.bid);
+      if (bucket.length < 400) { bucket.push([key, v.entry]); problemPending.delete(key); }
+    }
+    for (const [bid, items] of byBid) {
+      const body = JSON.stringify({ bid, entries: items.map(([, e]) => e) });
+      try {
+        chrome.runtime.sendMessage({
+          type: 'rookhub-fetch',
+          url: baseUrl + '/api/extension/chessable/problem-moves',
+          method: 'POST',
+          headers: {
+            'Authorization': 'Bearer ' + cfg.token,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+          },
+          body,
+          expect: 'json',
+        }, (resp) => {
+          if (!chrome.runtime.lastError && resp && resp.ok) {
+            for (const [key, e] of items) problemSent.set(key, JSON.stringify(e));
+          }
+          // Fehlschlag: bewusst NICHT re-queuen — die nächste Capture bringt denselben Stand.
+        });
+      } catch (e) { /* still */ }
+    }
+    if (problemPending.size && !problemFlushTimer) problemFlushTimer = setTimeout(flushProblemMoves, 15000);
+  }
+
+  function harvestFromList(bid, body) {
+    let o; try { o = JSON.parse(body); } catch (e) { return; }
+    const data = o && (o.list || o.List) && ((o.list || o.List).data || (o.list || o.List).Data);
+    if (!Array.isArray(data)) return;
+    for (const item of data) {
+      const oid = item && item.id != null ? String(item.id) : null;
+      if (!oid || typeof item.nHard !== 'number') continue;
+      queueProblemEntry(bid, { oid, nHard: item.nHard });
+    }
+  }
+
+  function harvestFromGame(bid, oid, body) {
+    let o; try { o = JSON.parse(body); } catch (e) { return; }
+    const g = o && (o.game || o.Game);
+    if (!g || !oid) return;
+    let tu = g.problemMoves && g.problemMoves.thisUser;
+    // Chessable liefert bei „keine Fehlzüge" leere ARRAYS statt Objekte → als {} normalisieren
+    // (löscht serverseitig alte Fehlzüge; die Linie läuft jetzt sauber).
+    if (!tu || Array.isArray(tu)) tu = {};
+    const entry = { oid: String(oid), problemMoves: tu };
+    if (typeof g.lastReviewed === 'string') entry.lastReviewed = g.lastReviewed.slice(0, 40);
+    queueProblemEntry(bid, entry);
+  }
+
   // MAIN-World chessable-capture.js → hier: rohe Kurs-API-Antworten puffern (nur source+origin-geprüft).
   window.addEventListener('message', (e) => {
     if (e.source !== window || e.origin !== location.origin || !e.data || e.data.__repcheck !== 'chessable-capture') return;
@@ -550,12 +632,14 @@
         cap.lists[info.lid] = body; cap.bytes += body.length;
         for (const oid of Crawl.parseLineOids(body)) cap.oidToLid[oid] = info.lid;
       }
+      harvestFromList(info.bid || cap.bid || currentCourseId(), body);
     } else if (info.kind === 'game') {
       if (info.oid != null && !cap.games[info.oid]) { cap.games[info.oid] = body; cap.bytes += body.length; }
       // Beim TRAINING lädt die SPA je Variante genau ein getGame → die zuletzt geladene oid ist
       // die gerade trainierte Linie. Während eines aktiven Kurs-Crawls (viele getGames in Serie)
       // ist das Signal wertlos → nicht überschreiben.
       if (!crawling && info.oid != null) { lastGameOid = String(info.oid); lastGameOidAt = now(); }
+      harvestFromGame(cap.bid || currentCourseId(), info.oid, body);
     }
     if (autoImport) scheduleAutoImport();
   });
@@ -689,6 +773,7 @@
       for (const lid of lids) {
         if (cancelRequested) { setStatus('Abgebrochen.'); return; }
         const listText = (cap.lists[lid] && cap.bid === bid) ? cap.lists[lid] : await chessableGet(`getList?bid=${bid}&lid=${lid}`);
+        harvestFromList(bid, listText);   // nHard je Linie auch beim aktiven Kurs-Holen ernten
         const oids = Crawl.parseLineOids(listText);
         lists.push({ listText, oids });
         total += oids.length;
@@ -712,7 +797,7 @@
           if (incremental && already.has(String(oid))) { skipped++; continue; }   // schon auf RookHub → nicht holen
           let g = cap.games[oid];
           if (!g) { g = await chessableGet(`getGame?lng=en&oid=${oid}`); await sleep(CRAWL_INTER_MS); }
-          if (g && g.trim() && g.trim() !== '{}') { lines.push(g); cap.games[oid] = g; }
+          if (g && g.trim() && g.trim() !== '{}') { lines.push(g); cap.games[oid] = g; harvestFromGame(bid, oid, g); }
           done++; setStatus(`Hole neue Linien … ${done}/${toFetch}`);
         }
         if (!lines.length) continue;
