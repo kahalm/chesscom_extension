@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RepCheck — Opening Repertoire Deviation Checker
 // @namespace    https://github.com/kahalm/repcheck
-// @version      1.34.1
+// @version      1.35.0
 // @require      https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js
 // @description  Shows where your game deviates from your opening repertoire (chess.com + lichess, PGN files or RookHub). On chessable.com: copy/search FEN, remember a line to RookHub, show earned XP, report active training time to RookHub, read the API token.
 // @author       kahalm
@@ -1566,7 +1566,12 @@
       if (!info || cap.bytes + body.length > CAP_MAX) return;
       if (info.kind === 'course') { const bid = info.bid || currentCourseId(); if (bid && bid !== cap.bid) resetCap(bid); if (!cap.bid) cap.bid = bid || null; cap.courseText = body; cap.bytes += body.length; }
       else if (info.kind === 'list') { if (info.bid && info.bid !== cap.bid) resetCap(info.bid); if (!cap.bid && info.bid) cap.bid = info.bid; if (info.lid != null) { cap.lists[info.lid] = body; cap.bytes += body.length; for (const oid of parseLineOids(body)) cap.oidToLid[oid] = info.lid; } }
-      else if (info.kind === 'game') { if (info.oid != null && !cap.games[info.oid]) { cap.games[info.oid] = body; cap.bytes += body.length; } }
+      else if (info.kind === 'game') {
+        if (info.oid != null && !cap.games[info.oid]) { cap.games[info.oid] = body; cap.bytes += body.length; }
+        // Trainings-Signal für initChessableActivityTracking (eigene Closure): zuletzt geladene
+        // Linie = gerade trainierte Linie. Während eines aktiven Crawls wertlos → nicht spiegeln.
+        if (!crawling && info.oid != null) window.__repcheckLastGameOid = { oid: String(info.oid), at: Date.now() };
+      }
       updatePanel();
       if (autoImport) scheduleAutoImport();
     }
@@ -2004,6 +2009,31 @@
       lastLineCountAt = now();
       linesTrained++;
       bump();
+      reportTrainedLine();
+    }
+
+    // „Linie trainiert" → RookHub (Kurs gelöst + Repertoire-SR nachziehen). Die oid kommt aus dem
+    // Browser-Import-Mitschnitt (window.__repcheckLastGameOid, s. initChessableBrowserImport).
+    const reportedOids = new Map();
+    function reportTrainedLine() {
+      const sig = window.__repcheckLastGameOid;
+      const bid = currentCourseId();
+      if (!sig || !bid || Date.now() - sig.at > 30 * 60 * 1000) return;
+      const last = reportedOids.get(sig.oid) || 0;
+      if (Date.now() - last < 5 * 60 * 1000) return;
+      reportedOids.set(sig.oid, Date.now());
+      const cfg = readConfig();
+      if (!cfg || !cfg.url || !cfg.token) return;
+      fetch(String(cfg.url).replace(/\/$/, '') + '/api/extension/chessable/line-trained', {
+        method: 'POST',
+        mode: 'cors',
+        headers: {
+          'Authorization': 'Bearer ' + cfg.token,
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ bid, oid: sig.oid }),
+      }).catch(() => {});
     }
     document.addEventListener('click', (e) => {
       const btn = e.target && e.target.closest && e.target.closest('button, a, [role="button"]');

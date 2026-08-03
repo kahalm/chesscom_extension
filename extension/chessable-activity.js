@@ -26,7 +26,9 @@
 
   let activeMs = 0;
   let movesTrained = 0;
-  let linesTrained = 0;        // abgeschlossene Linien (Klick auf „Next variation")
+  let linesTrained = 0;        // abgeschlossene Linien (Klick/Leertaste auf „Next variation")
+  let lastGameOid = null;      // oid der zuletzt von der SPA geladenen Linie (aus dem Mitschnitt)
+  let lastGameOidAt = 0;
   let lastActivity = 0;
   let lastFlush = Date.now();
   let courseKind = null;       // RepertoireKind (vom Server, z. B. "Opening") oder null = unbekannt
@@ -63,6 +65,38 @@
     lastLineCountAt = now();
     linesTrained++;
     bump();
+    reportTrainedLine();
+  }
+
+  // „Linie auf Chessable trainiert" → RookHub markiert sie im Kurs als gelöst und zieht den
+  // Repertoire-SR nach (neu → gelernt, fällig → +1 Stufe). Best-effort + idempotent serverseitig;
+  // je oid nur alle 5 min erneut gemeldet (Doppel-Klicks/Space+Klick).
+  const reportedOids = new Map();   // oid → zuletzt gemeldet (ms)
+  async function reportTrainedLine() {
+    const bid = currentCourseId();
+    if (!bid || !lastGameOid) return;
+    if (now() - lastGameOidAt > 30 * 60 * 1000) return;   // veraltetes Signal (Tab lag herum)
+    const oid = lastGameOid;
+    const last = reportedOids.get(oid) || 0;
+    if (now() - last < 5 * 60 * 1000) return;
+    reportedOids.set(oid, now());
+    const cfg = await readConfig();
+    if (!cfg || !cfg.url || !cfg.token) return;
+    const baseUrl = String(cfg.url).replace(/\/$/, '');
+    try {
+      chrome.runtime.sendMessage({
+        type: 'rookhub-fetch',
+        url: baseUrl + '/api/extension/chessable/line-trained',
+        method: 'POST',
+        headers: {
+          'Authorization': 'Bearer ' + cfg.token,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: JSON.stringify({ bid, oid }),
+        expect: 'json',
+      }, () => { /* best-effort */ });
+    } catch (e) { /* still */ }
   }
   document.addEventListener('click', (e) => {
     const btn = e.target && e.target.closest && e.target.closest('button, a, [role="button"]');
@@ -518,6 +552,10 @@
       }
     } else if (info.kind === 'game') {
       if (info.oid != null && !cap.games[info.oid]) { cap.games[info.oid] = body; cap.bytes += body.length; }
+      // Beim TRAINING lädt die SPA je Variante genau ein getGame → die zuletzt geladene oid ist
+      // die gerade trainierte Linie. Während eines aktiven Kurs-Crawls (viele getGames in Serie)
+      // ist das Signal wertlos → nicht überschreiben.
+      if (!crawling && info.oid != null) { lastGameOid = String(info.oid); lastGameOidAt = now(); }
     }
     if (autoImport) scheduleAutoImport();
   });
