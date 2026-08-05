@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RepCheck — Opening Repertoire Deviation Checker
 // @namespace    https://github.com/kahalm/repcheck
-// @version      1.36.0
+// @version      1.37.0
 // @require      https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js
 // @description  Shows where your game deviates from your opening repertoire (chess.com + lichess, PGN files or RookHub). On chessable.com: copy/search FEN, remember a line to RookHub, show earned XP, report active training time to RookHub, read the API token.
 // @author       kahalm
@@ -2632,6 +2632,72 @@
       (document.head || document.documentElement).appendChild(st);
     }
 
+    // ── Vollbild-/Zen-Modus (identisch zur Extension-Variante) ────────────
+    // Ganze Seite in echtes Vollbild, Brett skaliert mittig auf dunklem
+    // Backdrop; KEIN DOM-Umbau (React) — nur Inline-Styles + eigenes DIV.
+    const ZEN_BACKDROP_ID = 'repcheck-zen-backdrop';
+    let zenBoard = null;
+    let zenPrevStyle = '';
+    let zenRescale = null;
+    let zenBtnRef = null;
+
+    function zenTarget() {
+      return document.getElementById('board')
+        || document.querySelector('[data-square]')?.closest('#board, [class*="chessboard"]')
+        || document.querySelector('.cg-wrap, cg-container, [class*="cg-wrap"]')
+        || null;
+    }
+
+    function zenActive() { return !!document.getElementById(ZEN_BACKDROP_ID); }
+
+    function enterZen(btn) {
+      const board = zenTarget();
+      const rect = board && board.getBoundingClientRect();
+      if (!board || !rect || !rect.width) { flash(btn, 'No board found', '#c62828'); return; }
+      zenBoard = board;
+      zenPrevStyle = board.getAttribute('style') || '';
+      const backdrop = document.createElement('div');
+      backdrop.id = ZEN_BACKDROP_ID;
+      Object.assign(backdrop.style, { position: 'fixed', inset: '0', background: '#111', zIndex: '2147483600' });
+      backdrop.addEventListener('click', () => exitZen());
+      document.body.appendChild(backdrop);
+      const baseWidth = rect.width;
+      zenRescale = () => {
+        const k = (Math.min(window.innerWidth, window.innerHeight) * 0.97) / baseWidth;
+        Object.assign(board.style, {
+          position: 'fixed', left: '50%', top: '50%', margin: '0',
+          transform: `translate(-50%, -50%) scale(${k})`,
+          transformOrigin: 'center center',
+          zIndex: '2147483610',
+        });
+      };
+      zenRescale();
+      window.addEventListener('resize', zenRescale);
+      if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(() => {});
+      updateZenButton();
+    }
+
+    function exitZen() {
+      const bd = document.getElementById(ZEN_BACKDROP_ID);
+      if (bd) bd.remove();
+      if (zenRescale) { window.removeEventListener('resize', zenRescale); zenRescale = null; }
+      if (zenBoard) {
+        if (zenPrevStyle) zenBoard.setAttribute('style', zenPrevStyle);
+        else zenBoard.removeAttribute('style');
+        zenBoard = null;
+      }
+      if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
+      updateZenButton();
+    }
+
+    document.addEventListener('fullscreenchange', () => {
+      if (!document.fullscreenElement && zenActive()) exitZen();
+    });
+
+    function updateZenButton() {
+      if (zenBtnRef) zenBtnRef.textContent = zenActive() ? 'Exit Vollbild' : 'Vollbild';
+    }
+
     function createUi() {
       if (document.getElementById(CONTAINER_ID)) return;
       injectMobileStyle();
@@ -2695,12 +2761,21 @@
       styleButton(rememberBtn, '#6a1b9a');
       rememberBtn.addEventListener('click', () => rememberLine(rememberBtn));
 
+      const fullscreenBtn = document.createElement('button');
+      fullscreenBtn.type = 'button';
+      fullscreenBtn.textContent = 'Vollbild';
+      fullscreenBtn.title = 'Brett bildschirmfüllend (Esc beendet)';
+      styleButton(fullscreenBtn, '#37474f');
+      fullscreenBtn.addEventListener('click', () => { zenActive() ? exitZen() : enterZen(fullscreenBtn); });
+      zenBtnRef = fullscreenBtn;
+
       // XP-Anzeige vorerst deaktiviert (kommt später wieder) — Badge + Tracker aus.
       wrap.appendChild(copyBtn);
       wrap.appendChild(analyseBtn);
       wrap.appendChild(searchBtn);
       wrap.appendChild(refreshBtn);
       wrap.appendChild(rememberBtn);
+      wrap.appendChild(fullscreenBtn);
       document.body.appendChild(wrap);
     }
 

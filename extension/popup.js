@@ -31,7 +31,7 @@ document.getElementById('open-settings').addEventListener('click', async () => {
 // ─── Chessable-Button-Einstellungen (pro Button ein-/ausblendbar) ──────
 // Persistiert in chrome.storage.local `chessableButtons`; chessable-activity.js spiegelt es live
 // an chessable-fen.js (MAIN-World), das die Buttons entsprechend zeigt/versteckt.
-const CB_KEYS = ['copyFen', 'analyse', 'searchFen', 'refresh', 'remember'];
+const CB_KEYS = ['copyFen', 'analyse', 'searchFen', 'refresh', 'remember', 'fullscreen'];
 function cbEl(k) { return document.getElementById('cb-' + k); }
 function loadChessableButtons() {
   if (!chrome.storage || !chrome.storage.local) return;

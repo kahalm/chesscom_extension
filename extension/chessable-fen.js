@@ -380,6 +380,86 @@
     (document.head || document.documentElement).appendChild(st);
   }
 
+  // ── Vollbild-/Zen-Modus ─────────────────────────────────────────────────
+  // Ganze Seite in echtes Vollbild, das Brett skaliert mittig auf dunklem
+  // Backdrop. Bewusst KEIN DOM-Umbau (Chessable ist React — Knoten verschieben
+  // bricht die Reconciliation): das Brett bekommt nur Inline-Styles, der Rest
+  // der Seite verschwindet hinter einem eigenen Backdrop-DIV. Die RepCheck-
+  // Buttons liegen über dem Backdrop → der Knopf selbst (oder Esc) führt raus.
+  const ZEN_BACKDROP_ID = 'repcheck-zen-backdrop';
+  let zenBoard = null;
+  let zenPrevStyle = '';
+  let zenRescale = null;
+
+  function zenTarget() {
+    return document.getElementById('board')
+      || document.querySelector('[data-square]')?.closest('#board, [class*="chessboard"]')
+      || document.querySelector('.cg-wrap, cg-container, [class*="cg-wrap"]')
+      || null;
+  }
+
+  function zenActive() { return !!document.getElementById(ZEN_BACKDROP_ID); }
+
+  function enterZen(btn) {
+    const board = zenTarget();
+    const rect = board && board.getBoundingClientRect();
+    if (!board || !rect || !rect.width) { flash(btn, 'No board found', '#c62828'); return; }
+    zenBoard = board;
+    zenPrevStyle = board.getAttribute('style') || '';
+
+    const backdrop = document.createElement('div');
+    backdrop.id = ZEN_BACKDROP_ID;
+    Object.assign(backdrop.style, {
+      position: 'fixed', inset: '0', background: '#111', zIndex: '2147483600',
+    });
+    backdrop.addEventListener('click', () => exitZen());
+    document.body.appendChild(backdrop);
+
+    // Brett auf min(Breite, Höhe) skalieren; Basisbreite ist die UNskalierte
+    // Layout-Breite von vor dem Transform (rect wurde davor gemessen).
+    const baseWidth = rect.width;
+    zenRescale = () => {
+      const k = (Math.min(window.innerWidth, window.innerHeight) * 0.97) / baseWidth;
+      Object.assign(board.style, {
+        position: 'fixed', left: '50%', top: '50%', margin: '0',
+        transform: `translate(-50%, -50%) scale(${k})`,
+        transformOrigin: 'center center',
+        zIndex: '2147483610',
+      });
+    };
+    zenRescale();
+    window.addEventListener('resize', zenRescale);
+
+    if (document.documentElement.requestFullscreen) {
+      document.documentElement.requestFullscreen().catch(() => {});
+    }
+    updateZenButton();
+  }
+
+  function exitZen() {
+    document.getElementById(ZEN_BACKDROP_ID)?.remove();
+    if (zenRescale) { window.removeEventListener('resize', zenRescale); zenRescale = null; }
+    if (zenBoard) {
+      if (zenPrevStyle) zenBoard.setAttribute('style', zenPrevStyle);
+      else zenBoard.removeAttribute('style');
+      zenBoard = null;
+    }
+    if (document.fullscreenElement && document.exitFullscreen) {
+      document.exitFullscreen().catch(() => {});
+    }
+    updateZenButton();
+  }
+
+  // Esc beendet nur das Browser-Vollbild — dann auch den Zen-Zustand abbauen.
+  document.addEventListener('fullscreenchange', () => {
+    if (!document.fullscreenElement && zenActive()) exitZen();
+  });
+
+  function updateZenButton() {
+    const btn = btnRefs.fullscreen;
+    if (btn) btn.textContent = zenActive() ? 'Exit Vollbild' : 'Vollbild';
+  }
+
   function createUi() {
     if (document.getElementById(CONTAINER_ID)) return;
     injectMobileStyle();
@@ -459,13 +539,21 @@
     rememberBtn.title = 'Stellung in RookHub merken';
     rememberBtn.addEventListener('click', () => rememberLine(rememberBtn));
 
+    const fullscreenBtn = document.createElement('button');
+    fullscreenBtn.type = 'button';
+    fullscreenBtn.textContent = 'Vollbild';
+    styleButton(fullscreenBtn, '#37474f');
+    fullscreenBtn.title = 'Brett bildschirmfüllend (Esc beendet)';
+    fullscreenBtn.addEventListener('click', () => { zenActive() ? exitZen() : enterZen(fullscreenBtn); });
+
     // XP-Anzeige vorerst deaktiviert (kommt später wieder) — Badge + Tracker aus.
-    btnRefs = { copyFen: copyBtn, analyse: analyseBtn, searchFen: searchBtn, refresh: refreshBtn, remember: rememberBtn };
+    btnRefs = { copyFen: copyBtn, analyse: analyseBtn, searchFen: searchBtn, refresh: refreshBtn, remember: rememberBtn, fullscreen: fullscreenBtn };
     wrap.appendChild(copyBtn);
     wrap.appendChild(analyseBtn);
     wrap.appendChild(searchBtn);
     wrap.appendChild(refreshBtn);
     wrap.appendChild(rememberBtn);
+    wrap.appendChild(fullscreenBtn);
     document.body.appendChild(wrap);
     applyButtonSettings();     // je nach Popup-Einstellung ein-/ausblenden
     requestButtonSettings();   // aktuelle Einstellung aus der isolierten Welt anfordern
@@ -480,7 +568,7 @@
   // chrome.*-Zugriff → chessable-activity.js (isoliert) spiegelt die Einstellung per postMessage
   // hierher (Same-Window + Same-Origin geprüft; kein Secret).
   let btnRefs = {};
-  let buttonSettings = { copyFen: true, analyse: true, searchFen: true, refresh: true, remember: true };
+  let buttonSettings = { copyFen: true, analyse: true, searchFen: true, refresh: true, remember: true, fullscreen: true };
   function applyButtonSettings() {
     for (const key of Object.keys(btnRefs)) {
       const btn = btnRefs[key];
@@ -493,7 +581,7 @@
   window.addEventListener('message', (e) => {
     if (e.source !== window || e.origin !== location.origin || !e.data || e.data.__repcheck !== 'chessable-buttons') return;
     const s = e.data.settings;
-    if (s && typeof s === 'object') { buttonSettings = Object.assign({ copyFen: true, analyse: true, searchFen: true, refresh: true, remember: true }, s); applyButtonSettings(); }
+    if (s && typeof s === 'object') { buttonSettings = Object.assign({ copyFen: true, analyse: true, searchFen: true, refresh: true, remember: true, fullscreen: true }, s); applyButtonSettings(); }
   });
 
   // Die RookHub-URL liegt extension-privat in chrome.storage.local (nur isolierte Welt lesbar);
