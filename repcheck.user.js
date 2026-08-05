@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RepCheck — Opening Repertoire Deviation Checker
 // @namespace    https://github.com/kahalm/repcheck
-// @version      1.37.0
+// @version      1.37.1
 // @require      https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js
 // @description  Shows where your game deviates from your opening repertoire (chess.com + lichess, PGN files or RookHub). On chessable.com: copy/search FEN, remember a line to RookHub, show earned XP, report active training time to RookHub, read the API token.
 // @author       kahalm
@@ -2662,8 +2662,9 @@
       backdrop.addEventListener('click', () => exitZen());
       document.body.appendChild(backdrop);
       const baseWidth = rect.width;
+      const baseHeight = rect.height || rect.width;
       zenRescale = () => {
-        const k = (Math.min(window.innerWidth, window.innerHeight) * 0.97) / baseWidth;
+        const k = 0.97 * Math.min(window.innerWidth / baseWidth, window.innerHeight / baseHeight);
         Object.assign(board.style, {
           position: 'fixed', left: '50%', top: '50%', margin: '0',
           transform: `translate(-50%, -50%) scale(${k})`,

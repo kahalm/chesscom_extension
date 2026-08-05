@@ -418,8 +418,9 @@
     // Brett auf min(Breite, Höhe) skalieren; Basisbreite ist die UNskalierte
     // Layout-Breite von vor dem Transform (rect wurde davor gemessen).
     const baseWidth = rect.width;
+    const baseHeight = rect.height || rect.width;
     zenRescale = () => {
-      const k = (Math.min(window.innerWidth, window.innerHeight) * 0.97) / baseWidth;
+      const k = 0.97 * Math.min(window.innerWidth / baseWidth, window.innerHeight / baseHeight);
       Object.assign(board.style, {
         position: 'fixed', left: '50%', top: '50%', margin: '0',
         transform: `translate(-50%, -50%) scale(${k})`,
