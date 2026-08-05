@@ -417,12 +417,18 @@
 
     // Brett auf min(Breite, Höhe) skalieren; Basisbreite ist die UNskalierte
     // Layout-Breite von vor dem Transform (rect wurde davor gemessen).
+    // Layout-Größe von VOR dem Umschalten in px festnageln: position:fixed löst
+    // %-Breiten sonst gegen den Viewport auf und Chessables Responsive-Layout
+    // wächst im Vollbild nach — beides machte die Skalier-Basis größer als
+    // gemessen (Brett lief oben/unten raus).
     const baseWidth = rect.width;
     const baseHeight = rect.height || rect.width;
     zenRescale = () => {
       const k = 0.97 * Math.min(window.innerWidth / baseWidth, window.innerHeight / baseHeight);
       Object.assign(board.style, {
         position: 'fixed', left: '50%', top: '50%', margin: '0',
+        width: baseWidth + 'px', height: baseHeight + 'px',
+        maxWidth: baseWidth + 'px', maxHeight: baseHeight + 'px',
         transform: `translate(-50%, -50%) scale(${k})`,
         transformOrigin: 'center center',
         zIndex: '2147483610',

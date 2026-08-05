@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RepCheck — Opening Repertoire Deviation Checker
 // @namespace    https://github.com/kahalm/repcheck
-// @version      1.37.1
+// @version      1.37.2
 // @require      https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js
 // @description  Shows where your game deviates from your opening repertoire (chess.com + lichess, PGN files or RookHub). On chessable.com: copy/search FEN, remember a line to RookHub, show earned XP, report active training time to RookHub, read the API token.
 // @author       kahalm
@@ -2661,12 +2661,18 @@
       Object.assign(backdrop.style, { position: 'fixed', inset: '0', background: '#111', zIndex: '2147483600' });
       backdrop.addEventListener('click', () => exitZen());
       document.body.appendChild(backdrop);
+      // Layout-Größe von VOR dem Umschalten in px festnageln: position:fixed löst
+      // %-Breiten sonst gegen den Viewport auf und Chessables Responsive-Layout
+      // wächst im Vollbild nach — beides machte die Skalier-Basis größer als
+      // gemessen (Brett lief oben/unten raus).
       const baseWidth = rect.width;
       const baseHeight = rect.height || rect.width;
       zenRescale = () => {
         const k = 0.97 * Math.min(window.innerWidth / baseWidth, window.innerHeight / baseHeight);
         Object.assign(board.style, {
           position: 'fixed', left: '50%', top: '50%', margin: '0',
+          width: baseWidth + 'px', height: baseHeight + 'px',
+          maxWidth: baseWidth + 'px', maxHeight: baseHeight + 'px',
           transform: `translate(-50%, -50%) scale(${k})`,
           transformOrigin: 'center center',
           zIndex: '2147483610',
