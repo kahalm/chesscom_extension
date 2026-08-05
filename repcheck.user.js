@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RepCheck — Opening Repertoire Deviation Checker
 // @namespace    https://github.com/kahalm/repcheck
-// @version      1.37.4
+// @version      1.37.5
 // @require      https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js
 // @description  Shows where your game deviates from your opening repertoire (chess.com + lichess, PGN files or RookHub). On chessable.com: copy/search FEN, remember a line to RookHub, show earned XP, report active training time to RookHub, read the API token.
 // @author       kahalm
@@ -2670,11 +2670,16 @@
       const baseHeight = rect.height || rect.width;
       zenRescale = () => {
         const k = 0.97 * Math.min(window.innerWidth / baseWidth, window.innerHeight / baseHeight);
+        // zoom statt transform:scale — ein Transform skaliert nur das RENDERING,
+        // Chessables Drag-Logik rechnet aber in Layout-Pixeln (Figur läuft dem
+        // Cursor versetzt hinterher). zoom skaliert auch das Layout, damit
+        // stimmen Maus- und Brettkoordinaten beim Ziehen wieder überein.
         Object.assign(board.style, {
           position: 'fixed', left: '50%', top: '50%', margin: '0',
           width: baseWidth + 'px', height: baseHeight + 'px',
           maxWidth: baseWidth + 'px', maxHeight: baseHeight + 'px',
-          transform: `translate(-50%, -50%) scale(${k})`,
+          zoom: String(k),
+          transform: 'translate(-50%, -50%)',
           transformOrigin: 'center center',
           zIndex: '2147483610',
         });
