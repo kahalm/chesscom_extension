@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RepCheck — Opening Repertoire Deviation Checker
 // @namespace    https://github.com/kahalm/repcheck
-// @version      1.37.2
+// @version      1.37.3
 // @require      https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js
 // @description  Shows where your game deviates from your opening repertoire (chess.com + lichess, PGN files or RookHub). On chessable.com: copy/search FEN, remember a line to RookHub, show earned XP, report active training time to RookHub, read the API token.
 // @author       kahalm
@@ -2703,6 +2703,13 @@
 
     function updateZenButton() {
       if (zenBtnRef) zenBtnRef.textContent = zenActive() ? 'Exit Vollbild' : 'Vollbild';
+      // Im Zen-Modus alle anderen RepCheck-Buttons ausblenden — nur "Exit
+      // Vollbild" bleibt; beim Verlassen wieder alle zeigen.
+      const wrap = document.getElementById(CONTAINER_ID);
+      if (!wrap) return;
+      for (const child of wrap.children) {
+        child.style.display = (zenActive() && child !== zenBtnRef) ? 'none' : '';
+      }
     }
 
     function createUi() {

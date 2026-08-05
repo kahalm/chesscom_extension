@@ -465,6 +465,18 @@
   function updateZenButton() {
     const btn = btnRefs.fullscreen;
     if (btn) btn.textContent = zenActive() ? 'Exit Vollbild' : 'Vollbild';
+    // Im Zen-Modus alle anderen RepCheck-Buttons ausblenden — sichtbar bleibt
+    // nur "Exit Vollbild". Beim Verlassen stellt applyButtonSettings() die
+    // Popup-Einstellungen (ein-/ausgeblendete Buttons) wieder her.
+    const wrap = document.getElementById(CONTAINER_ID);
+    if (!wrap) return;
+    if (zenActive()) {
+      for (const child of wrap.children) {
+        child.style.display = (child === btn) ? '' : 'none';
+      }
+    } else {
+      applyButtonSettings();
+    }
   }
 
   function createUi() {
