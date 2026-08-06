@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RepCheck — Opening Repertoire Deviation Checker
 // @namespace    https://github.com/kahalm/repcheck
-// @version      1.37.7
+// @version      1.38.0
 // @require      https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js
 // @description  Shows where your game deviates from your opening repertoire (chess.com + lichess, PGN files or RookHub). On chessable.com: copy/search FEN, remember a line to RookHub, show earned XP, report active training time to RookHub, read the API token.
 // @author       kahalm
@@ -2649,6 +2649,11 @@
     let zenPokeTimer = null;
     let zenBtnRef = null;
     let zenRefreshBtnRef = null;
+    // Zen-only-Buttons (▸ Next, 💬 Kommentar-Panel) + gehobenes Panel-Element.
+    let zenNextBtnRef = null;
+    let zenPanelBtnRef = null;
+    let zenPanelEl = null;
+    let zenPanelPrevStyle = '';
 
     function zenTarget() {
       return document.getElementById('board')
@@ -2719,6 +2724,7 @@
       const bd = document.getElementById(ZEN_BACKDROP_ID);
       if (bd) bd.remove();
       document.getElementById(ZEN_STYLE_ID)?.remove();
+      zenPanelHide();
       if (zenPokeTimer) { clearTimeout(zenPokeTimer); zenPokeTimer = null; }
       if (zenRescale) { window.removeEventListener('resize', zenRescale); zenRescale = null; }
       if (zenBoard) {
@@ -2732,6 +2738,84 @@
       updateZenButton();
     }
 
+    // ── Zen-Extras: ▸ Next-Klick + 💬 Kommentar-/Zugspalte ────────────────
+    // Chessables eigener „Next"-Knopf liegt im Zen-Modus hinterm Backdrop —
+    // der ▸-Button sucht ihn per Text und klickt ihn programmatisch (React
+    // bekommt ein echtes click-Event, Sichtbarkeit spielt dafür keine Rolle).
+    function clickChessableNext(btn) {
+      const cand = [...document.querySelectorAll('button, a, [role="button"]')].find((el) => {
+        if (el.closest('#' + CONTAINER_ID)) return false;
+        const t = (el.textContent || '').trim();
+        if (!/^(next( variation| chapter| move| line)?|weiter)$/i.test(t)) return false;
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+      });
+      if (cand) cand.click();
+      else flash(btn, 'Kein „Next" da', '#c62828');
+    }
+
+    // Kommentar-/Zugspalte finden: die Geschwister-Spalte der Brett-Spalte im
+    // Practice-Layout (row-practice__col*) mit dem meisten Text — dort wohnen
+    // die Kommentare + Zugliste, die man sonst am Linienende sieht.
+    function zenPanelTarget() {
+      const board = zenBoard || zenTarget();
+      const boardCol = board && board.closest('[class*="__col"]');
+      const row = boardCol && boardCol.parentElement;
+      if (!row) return null;
+      let best = null;
+      for (const el of row.children) {
+        if (el === boardCol) continue;
+        if (el.getBoundingClientRect().width < 120) continue;
+        if (!best || (el.textContent || '').length > (best.textContent || '').length) best = el;
+      }
+      return best;
+    }
+
+    function zenPanelShow(btn) {
+      const panel = zenPanelTarget();
+      if (!panel) { flash(btn, 'Kein Panel gefunden', '#c62828'); return; }
+      zenPanelEl = panel;
+      zenPanelPrevStyle = panel.getAttribute('style') || '';
+      // Rechts neben dem zentrierten Brett andocken; Breite = rechter
+      // Randstreifen (280–460px), notfalls leicht übers Brett (z-Index höher).
+      const boardRect = zenBoard ? zenBoard.getBoundingClientRect() : null;
+      const gutter = boardRect ? window.innerWidth - boardRect.right - 24 : 380;
+      const w = Math.round(Math.min(460, Math.max(280, gutter)));
+      const s = panel.style;
+      s.setProperty('position', 'fixed', 'important');
+      s.setProperty('top', '50%', 'important');
+      s.setProperty('right', '12px', 'important');
+      s.setProperty('transform', 'translateY(-50%)', 'important');
+      s.setProperty('width', w + 'px', 'important');
+      s.setProperty('max-height', '92vh', 'important');
+      s.setProperty('overflow-y', 'auto', 'important');
+      s.setProperty('z-index', '2147483615', 'important');
+      s.setProperty('margin', '0', 'important');
+      s.setProperty('padding', '12px', 'important');
+      s.setProperty('border-radius', '10px', 'important');
+      s.setProperty('box-shadow', '0 4px 24px rgba(0,0,0,0.5)', 'important');
+      // Transparente Panels bekommen auf dem dunklen Backdrop einen zur
+      // Textfarbe passenden Grund (helle Schrift → dunkel, dunkle → hell).
+      const cs = getComputedStyle(panel);
+      if (!cs.backgroundColor || cs.backgroundColor === 'transparent' || /rgba\([^)]*,\s*0\)\s*$/.test(cs.backgroundColor)) {
+        const m = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(cs.color || '');
+        const lightText = m && (+m[1] + +m[2] + +m[3]) / 3 > 128;
+        s.setProperty('background', lightText ? '#1e1e1e' : '#fafafa', 'important');
+      }
+    }
+
+    function zenPanelHide() {
+      if (!zenPanelEl) return;
+      if (zenPanelPrevStyle) zenPanelEl.setAttribute('style', zenPanelPrevStyle);
+      else zenPanelEl.removeAttribute('style');
+      zenPanelEl = null;
+    }
+
+    function toggleZenPanel(btn) {
+      if (zenPanelEl) zenPanelHide();
+      else zenPanelShow(btn);
+    }
+
     document.addEventListener('fullscreenchange', () => {
       if (!document.fullscreenElement && zenActive()) exitZen();
     });
@@ -2741,13 +2825,14 @@
         zenBtnRef.textContent = zenActive() ? '✕' : '⛶';
         zenBtnRef.title = zenActive() ? 'Vollbild verlassen (Esc)' : 'Brett bildschirmfüllend (Esc beendet)';
       }
-      // Im Zen-Modus bleiben nur "Exit Vollbild" und "Refresh" sichtbar;
-      // beim Verlassen wieder alle zeigen.
+      // Im Zen-Modus bleiben Exit, Refresh und die Zen-Extras (▸/💬) sichtbar;
+      // beim Verlassen wieder die normalen zeigen, Zen-Extras verstecken.
       const wrap = document.getElementById(CONTAINER_ID);
       if (!wrap) return;
       for (const child of wrap.children) {
-        const keep = child === zenBtnRef || child === zenRefreshBtnRef;
-        child.style.display = (zenActive() && !keep) ? 'none' : '';
+        const zenOnly = child === zenNextBtnRef || child === zenPanelBtnRef;
+        const keep = child === zenBtnRef || child === zenRefreshBtnRef || zenOnly;
+        child.style.display = zenActive() ? (keep ? '' : 'none') : (zenOnly ? 'none' : '');
       }
     }
 
@@ -2824,12 +2909,34 @@
       zenBtnRef = fullscreenBtn;
       zenRefreshBtnRef = refreshBtn;
 
+      // Zen-only: ▸ klickt Chessables „Next", 💬 holt die Kommentar-/Zugspalte
+      // vor das Backdrop. Außerhalb des Zen-Modus unsichtbar.
+      const zNext = document.createElement('button');
+      zNext.type = 'button';
+      zNext.textContent = '▸';
+      zNext.title = 'Next (nächste Variante/Kapitel)';
+      styleButton(zNext, '#2e7d32');
+      Object.assign(zNext.style, { fontSize: '15px', lineHeight: '1', padding: '8px 10px', display: 'none' });
+      zNext.addEventListener('click', () => clickChessableNext(zNext));
+      zenNextBtnRef = zNext;
+
+      const zPanel = document.createElement('button');
+      zPanel.type = 'button';
+      zPanel.textContent = '💬';
+      zPanel.title = 'Kommentare/Züge ein-/ausblenden';
+      styleButton(zPanel, '#455a64');
+      Object.assign(zPanel.style, { fontSize: '15px', lineHeight: '1', padding: '8px 10px', display: 'none' });
+      zPanel.addEventListener('click', () => toggleZenPanel(zPanel));
+      zenPanelBtnRef = zPanel;
+
       // XP-Anzeige vorerst deaktiviert (kommt später wieder) — Badge + Tracker aus.
       wrap.appendChild(copyBtn);
       wrap.appendChild(analyseBtn);
       wrap.appendChild(searchBtn);
       wrap.appendChild(refreshBtn);
       wrap.appendChild(rememberBtn);
+      wrap.appendChild(zPanel);
+      wrap.appendChild(zNext);
       wrap.appendChild(fullscreenBtn);
       document.body.appendChild(wrap);
     }
