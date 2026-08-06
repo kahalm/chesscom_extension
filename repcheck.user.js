@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RepCheck — Opening Repertoire Deviation Checker
 // @namespace    https://github.com/kahalm/repcheck
-// @version      1.37.5
+// @version      1.37.6
 // @require      https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js
 // @description  Shows where your game deviates from your opening repertoire (chess.com + lichess, PGN files or RookHub). On chessable.com: copy/search FEN, remember a line to RookHub, show earned XP, report active training time to RookHub, read the API token.
 // @author       kahalm
@@ -2633,12 +2633,20 @@
     }
 
     // ── Vollbild-/Zen-Modus (identisch zur Extension-Variante) ────────────
-    // Ganze Seite in echtes Vollbild, Brett skaliert mittig auf dunklem
+    // Ganze Seite in echtes Vollbild, Brett groß und mittig auf dunklem
     // Backdrop; KEIN DOM-Umbau (React) — nur Inline-Styles + eigenes DIV.
+    // Vergrößert wird OHNE zoom/transform:scale — beides bricht das Drag&Drop
+    // von chessboard.js (Feld-Offsets visuell gemessen, Treffer-Prüfung mit
+    // Layout-squareSize → Drops enden als Snapback). Stattdessen width/height
+    // per !important festnageln und Chessables Resize-Pfad anstoßen, damit
+    // board.resize() die squareSize echt neu berechnet.
     const ZEN_BACKDROP_ID = 'repcheck-zen-backdrop';
+    const ZEN_STYLE_ID = 'repcheck-zen-style';
     let zenBoard = null;
     let zenPrevStyle = '';
     let zenRescale = null;
+    let zenApplied = 0;
+    let zenPokeTimer = null;
     let zenBtnRef = null;
     let zenRefreshBtnRef = null;
 
@@ -2651,6 +2659,17 @@
 
     function zenActive() { return !!document.getElementById(ZEN_BACKDROP_ID); }
 
+    // Chessables Resize-Handler (debounced) anstoßen, damit chessboard.js die
+    // squareSize an die neue Brettgröße anpasst. Wird nur bei geänderter
+    // Zielgröße gerufen → keine Event-Schleife mit dem eigenen resize-Listener.
+    function zenPokeLayout() {
+      if (zenPokeTimer) return;
+      zenPokeTimer = setTimeout(() => {
+        zenPokeTimer = null;
+        window.dispatchEvent(new Event('resize'));
+      }, 60);
+    }
+
     function enterZen(btn) {
       const board = zenTarget();
       const rect = board && board.getBoundingClientRect();
@@ -2662,27 +2681,33 @@
       Object.assign(backdrop.style, { position: 'fixed', inset: '0', background: '#111', zIndex: '2147483600' });
       backdrop.addEventListener('click', () => exitZen());
       document.body.appendChild(backdrop);
-      // Layout-Größe von VOR dem Umschalten in px festnageln: position:fixed löst
-      // %-Breiten sonst gegen den Viewport auf und Chessables Responsive-Layout
-      // wächst im Vollbild nach — beides machte die Skalier-Basis größer als
-      // gemessen (Brett lief oben/unten raus).
-      const baseWidth = rect.width;
-      const baseHeight = rect.height || rect.width;
+      // chessboard.js hängt die gezogene Schwebefigur an <body> — die muss ÜBER
+      // das Backdrop, sonst ist die Figur während des Ziehens unsichtbar.
+      // (.piece-417db ist eine chessboard.js-Konstante, kein generierter Hash.)
+      if (!document.getElementById(ZEN_STYLE_ID)) {
+        const st = document.createElement('style');
+        st.id = ZEN_STYLE_ID;
+        st.textContent = 'body > .piece-417db { z-index: 2147483620 !important; }';
+        (document.head || document.documentElement).appendChild(st);
+      }
+      zenApplied = 0;
       zenRescale = () => {
-        const k = 0.97 * Math.min(window.innerWidth / baseWidth, window.innerHeight / baseHeight);
-        // zoom statt transform:scale — ein Transform skaliert nur das RENDERING,
-        // Chessables Drag-Logik rechnet aber in Layout-Pixeln (Figur läuft dem
-        // Cursor versetzt hinterher). zoom skaliert auch das Layout, damit
-        // stimmen Maus- und Brettkoordinaten beim Ziehen wieder überein.
-        Object.assign(board.style, {
-          position: 'fixed', left: '50%', top: '50%', margin: '0',
-          width: baseWidth + 'px', height: baseHeight + 'px',
-          maxWidth: baseWidth + 'px', maxHeight: baseHeight + 'px',
-          zoom: String(k),
-          transform: 'translate(-50%, -50%)',
-          transformOrigin: 'center center',
-          zIndex: '2147483610',
-        });
+        const target = Math.floor(0.97 * Math.min(window.innerWidth, window.innerHeight));
+        // !important, weil Chessables eigener Resize-Handler style.width neu
+        // setzt (fit-height-Berechnung): unsere Größe muss gewinnen — sein
+        // board.resize() liest danach die tatsächliche (= unsere) Breite und
+        // zeichnet die Felder in der neuen Größe.
+        const s = zenBoard.style;
+        s.setProperty('position', 'fixed', 'important');
+        s.setProperty('left', '50%', 'important');
+        s.setProperty('top', '50%', 'important');
+        s.setProperty('margin', '0', 'important');
+        s.setProperty('transform', 'translate(-50%, -50%)', 'important');
+        s.setProperty('z-index', '2147483610', 'important');
+        for (const p of ['width', 'height', 'max-width', 'max-height']) {
+          s.setProperty(p, target + 'px', 'important');
+        }
+        if (target !== zenApplied) { zenApplied = target; zenPokeLayout(); }
       };
       zenRescale();
       window.addEventListener('resize', zenRescale);
@@ -2693,12 +2718,16 @@
     function exitZen() {
       const bd = document.getElementById(ZEN_BACKDROP_ID);
       if (bd) bd.remove();
+      document.getElementById(ZEN_STYLE_ID)?.remove();
+      if (zenPokeTimer) { clearTimeout(zenPokeTimer); zenPokeTimer = null; }
       if (zenRescale) { window.removeEventListener('resize', zenRescale); zenRescale = null; }
       if (zenBoard) {
         if (zenPrevStyle) zenBoard.setAttribute('style', zenPrevStyle);
         else zenBoard.removeAttribute('style');
         zenBoard = null;
       }
+      // Chessable-Layout zurück auf Normalgröße rechnen lassen (board.resize()).
+      window.dispatchEvent(new Event('resize'));
       if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
       updateZenButton();
     }
