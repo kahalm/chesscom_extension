@@ -503,7 +503,10 @@
 
   function updateZenButton() {
     const btn = btnRefs.fullscreen;
-    if (btn) btn.textContent = zenActive() ? 'Exit Vollbild' : 'Vollbild';
+    if (btn) {
+      btn.textContent = zenActive() ? '✕' : '⛶';
+      btn.title = zenActive() ? 'Vollbild verlassen (Esc)' : 'Brett bildschirmfüllend (Esc beendet)';
+    }
     // Im Zen-Modus bleiben nur "Exit Vollbild" und "Refresh" sichtbar. Beim
     // Verlassen stellt applyButtonSettings() die Popup-Einstellungen wieder her.
     const wrap = document.getElementById(CONTAINER_ID);
@@ -598,8 +601,9 @@
 
     const fullscreenBtn = document.createElement('button');
     fullscreenBtn.type = 'button';
-    fullscreenBtn.textContent = 'Vollbild';
+    fullscreenBtn.textContent = '⛶';   // kompaktes Vollbild-Symbol statt Text-Button
     styleButton(fullscreenBtn, '#37474f');
+    Object.assign(fullscreenBtn.style, { fontSize: '15px', lineHeight: '1', padding: '8px 10px' });
     fullscreenBtn.title = 'Brett bildschirmfüllend (Esc beendet)';
     fullscreenBtn.addEventListener('click', () => { zenActive() ? exitZen() : enterZen(fullscreenBtn); });
 

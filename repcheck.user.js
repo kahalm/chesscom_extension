@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RepCheck — Opening Repertoire Deviation Checker
 // @namespace    https://github.com/kahalm/repcheck
-// @version      1.37.6
+// @version      1.37.7
 // @require      https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js
 // @description  Shows where your game deviates from your opening repertoire (chess.com + lichess, PGN files or RookHub). On chessable.com: copy/search FEN, remember a line to RookHub, show earned XP, report active training time to RookHub, read the API token.
 // @author       kahalm
@@ -2737,7 +2737,10 @@
     });
 
     function updateZenButton() {
-      if (zenBtnRef) zenBtnRef.textContent = zenActive() ? 'Exit Vollbild' : 'Vollbild';
+      if (zenBtnRef) {
+        zenBtnRef.textContent = zenActive() ? '✕' : '⛶';
+        zenBtnRef.title = zenActive() ? 'Vollbild verlassen (Esc)' : 'Brett bildschirmfüllend (Esc beendet)';
+      }
       // Im Zen-Modus bleiben nur "Exit Vollbild" und "Refresh" sichtbar;
       // beim Verlassen wieder alle zeigen.
       const wrap = document.getElementById(CONTAINER_ID);
@@ -2813,9 +2816,10 @@
 
       const fullscreenBtn = document.createElement('button');
       fullscreenBtn.type = 'button';
-      fullscreenBtn.textContent = 'Vollbild';
+      fullscreenBtn.textContent = '⛶';   // kompaktes Vollbild-Symbol statt Text-Button
       fullscreenBtn.title = 'Brett bildschirmfüllend (Esc beendet)';
       styleButton(fullscreenBtn, '#37474f');
+      Object.assign(fullscreenBtn.style, { fontSize: '15px', lineHeight: '1', padding: '8px 10px' });
       fullscreenBtn.addEventListener('click', () => { zenActive() ? exitZen() : enterZen(fullscreenBtn); });
       zenBtnRef = fullscreenBtn;
       zenRefreshBtnRef = refreshBtn;
