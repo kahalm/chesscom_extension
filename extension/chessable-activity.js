@@ -200,7 +200,8 @@
   });
 
   // Navigations-/Modus-Labels, die KEIN Kursname sind (füllten historisch die Statistik mit
-  // „Practice Moves"/„Learn Moves"-Müll). Gleiche Logik wie isNavLabel im Userscript/fen.js.
+  // „Practice Moves"/„Learn Moves"-Müll). Spiegel von lib/chessable-course-names.js `isNavLabel`
+  // — bei Änderungen dort UND in chessable-fen.js/repcheck.user.js nachziehen.
   function isNavLabel(txt) {
     const t = String(txt || '').toLowerCase().trim();
     if (/^(practice( moves)?|learn( moves)?|review|overview|variations?|move ?trainer|next|previous|prev|continue|weiter|home|leaderboard)$/.test(t)) return true;
@@ -937,6 +938,12 @@
     if (!Crawl) return;
     const bid = currentCourseId();
     if (!bid) return;
+    // Ohne RookHub-Config gibt es nichts anzuzeigen (fetchImportedOids liefert dann null) — dann
+    // aber auch KEIN automatisches getCourse mit dem Chessable-Bearer abfeuern. Sonst erzeugt
+    // jeder eingeloggte Chessable-Nutzer ungefragt genau die API-Last, vor der der Crawl-Dialog
+    // als Bannrisiko warnt.
+    const cfg = await readConfig();
+    if (!cfg || !cfg.url || !cfg.token) return;
     if (!force && bid === progressBid && (now() - progressAt) < PROGRESS_TTL) return;
     if (progressFetching) return;
     progressFetching = true;

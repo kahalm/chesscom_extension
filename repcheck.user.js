@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RepCheck — Opening Repertoire Deviation Checker
 // @namespace    https://github.com/kahalm/repcheck
-// @version      1.38.0
+// @version      1.38.1
 // @require      https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js
 // @description  Shows where your game deviates from your opening repertoire (chess.com + lichess, PGN files or RookHub). On chessable.com: copy/search FEN, remember a line to RookHub, show earned XP, report active training time to RookHub, read the API token.
 // @author       kahalm
@@ -1850,6 +1850,11 @@
     }
     async function ensureProgress(force) {
       const bid = currentCourseId(); if (!bid) return;
+      // Ohne RookHub-Config gibt es nichts anzuzeigen (fetchImportedOids liefert dann null) — dann
+      // aber auch KEIN automatisches getCourse mit dem Chessable-Bearer abfeuern. Sonst erzeugt
+      // jeder eingeloggte Chessable-Nutzer ungefragt genau die API-Last, vor der der Crawl-Dialog
+      // als Bannrisiko warnt.
+      const cfg0 = getCfg(); if (!cfg0 || !cfg0.url || !cfg0.token) return;
       if (!force && bid === progressBid && (Date.now() - progressAt) < PROGRESS_TTL) return;
       if (progressFetching) return; progressFetching = true;
       try {
@@ -2193,13 +2198,18 @@
     // (z. B. „Practice Moves", „Learn Moves", „Review", „nächstes Kapitel", „Previous variation").
     // Diese Links/Labels zeigen ebenfalls auf /course/{id}/… bzw. beschriften den Modus und haben
     // sonst den echten Titel verdrängt (Beispiel: gemeldeter Kursname „Practice Moves"/„Learn Moves").
+    // Spiegel von lib/chessable-course-names.js `isNavLabel` — bei Änderungen dort UND in
+    // chessable-activity.js/chessable-fen.js nachziehen (diese Kopie hing zurück und meldete
+    // „Leaderboard"/„Kapitel N" weiterhin als Kursname).
     function isNavLabel(txt) {
-      const t = txt.toLowerCase().trim();
+      const t = String(txt || '').toLowerCase().trim();
       // Eigenständige Nav-/Modus-/UI-Labels (exakter Match — echte Titel wie „Learn Chess Openings" bleiben).
-      if (/^(practice( moves)?|learn( moves)?|review|overview|variations?|move ?trainer|next|previous|prev|continue|weiter|home)$/.test(t)) return true;
+      if (/^(practice( moves)?|learn( moves)?|review|overview|variations?|move ?trainer|next|previous|prev|continue|weiter|home|leaderboard)$/.test(t)) return true;
       // „Next/Previous chapter|variation|move|line" bzw. deutsche Entsprechungen.
       if (/^(next|previous|prev|nächst\w*|naechst\w*|vorherig\w*|vorig\w*|letzt\w*)\b/.test(t)
           && /(chapter|variation|move|line|kapitel|variante|zug|linie)/.test(t)) return true;
+      // Kapitel-Überschriften („Kapitel 3:", „Chapter 12") — Seitentext, kein Kurstitel.
+      if (/^(kapitel|chapter)\s*\d*\s*:?$/.test(t)) return true;
       return false;
     }
 
@@ -2242,7 +2252,10 @@
         if (candidates.length) return candidates.sort((a, b) => b.length - a.length)[0];
       }
       const t = (document.title || '').replace(/\s*[|\-–]\s*Chessable.*$/i, '').trim();
-      return t || null;
+      // Auch der Seitentitel kann ein Nav-Label sein („Leaderboard | Chessable") — sonst landet
+      // der als courseName in training-activity/remember-line (gleiche Regel wie in
+      // chessable-activity.js).
+      return (t && !isNavLabel(t)) ? t : null;
     }
 
     // Bester verfügbarer Kursname: Chessable-API (autoritativ, via Bearer) > DOM-Heuristik.
@@ -2853,8 +2866,8 @@
       copyBtn.addEventListener('click', () => {
         const fen = buildFEN();
         if (!fen) { flash(copyBtn, 'No board found', '#c62828'); debugDump(); return; }
-        if (copyToClipboard(fen)) flash(copyBtn, 'Copied!', '#1565c0');
-        else { flash(copyBtn, 'Copy failed', '#c62828'); console.log('[RepCheck Chessable] FEN:', fen); }
+        if (copyToClipboard(fen)) { flash(copyBtn, 'Copied!', '#1565c0'); console.log('[RepCheck Chessable]', fen); }
+        else { flash(copyBtn, 'Copy failed', '#c62828'); console.log('[RepCheck Chessable] FEN (manual copy):', fen); }
       });
 
       const analyseBtn = document.createElement('button');
@@ -2890,7 +2903,13 @@
       refreshBtn.textContent = 'Refresh';
       refreshBtn.title = 'Seite neu laden';
       styleButton(refreshBtn, '#616161');
-      refreshBtn.addEventListener('click', () => { location.reload(); });
+      refreshBtn.addEventListener('click', () => {
+        // Chessable hängt im Training einen beforeunload-Handler ein („Seite verlassen?") — beim
+        // bewusst geklickten Refresh ist der Dialog nur Reibung. Einmalig in der Capture-Phase
+        // abfangen, bevor Chessables Handler dran ist (gleich wie in chessable-fen.js).
+        window.addEventListener('beforeunload', (e) => { e.stopImmediatePropagation(); delete e.returnValue; }, { capture: true, once: true });
+        location.reload();
+      });
 
       const rememberBtn = document.createElement('button');
       rememberBtn.type = 'button';

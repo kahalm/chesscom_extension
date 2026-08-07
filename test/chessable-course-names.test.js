@@ -2,7 +2,9 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { decodeChessableUid, parseCourseNameMap } =
+const fs = require('node:fs');
+const path = require('node:path');
+const { decodeChessableUid, parseCourseNameMap, isNavLabel } =
   require('../extension/lib/chessable-course-names.js');
 
 // Baut einen JWT (nur Payload zählt) mit base64url-kodiertem JSON.
@@ -63,4 +65,43 @@ test('parseCourseNameMap gibt {} bei fehlender/kaputter Struktur', () => {
   assert.deepStrictEqual(parseCourseNameMap({}), {});
   assert.deepStrictEqual(parseCourseNameMap({ homeData: {} }), {});
   assert.deepStrictEqual(parseCourseNameMap({ homeData: { booksList: 'nope' } }), {});
+});
+
+test('isNavLabel erkennt Modus-/Nav-Labels', () => {
+  for (const t of ['Practice', 'Practice Moves', 'Learn Moves', 'Review', 'Overview',
+                   'Variations', 'Move Trainer', 'Next', 'Weiter', 'Home']) {
+    assert.strictEqual(isNavLabel(t), true, t);
+  }
+  assert.strictEqual(isNavLabel('  nächstes Kapitel '), true);
+  assert.strictEqual(isNavLabel('Previous variation'), true);
+});
+
+test('isNavLabel erkennt Leaderboard und Kapitel-Überschriften', () => {
+  assert.strictEqual(isNavLabel('Leaderboard'), true);
+  assert.strictEqual(isNavLabel('Kapitel 3:'), true);
+  assert.strictEqual(isNavLabel('Chapter 12'), true);
+  assert.strictEqual(isNavLabel('kapitel:'), true);
+});
+
+test('isNavLabel lässt echte Kurstitel durch', () => {
+  assert.strictEqual(isNavLabel('Lifetime Repertoires: 1.e4'), false);
+  assert.strictEqual(isNavLabel('Learn Chess Openings'), false);
+  assert.strictEqual(isNavLabel('Chapter One of My Life'), false);
+  assert.strictEqual(isNavLabel(''), false);
+  assert.strictEqual(isNavLabel(null), false);
+});
+
+// Drift-Guard: die drei Laufzeit-Kopien von isNavLabel (Extension-Activity/-Fen + Userscript)
+// hingen schon einmal hinter der Lib zurück und meldeten weiter „Leaderboard"/„Kapitel N" als
+// Kursname. Der Test prüft, dass die beiden zuletzt ergänzten Muster überall vorhanden sind.
+test('isNavLabel-Kopien in Extension und Userscript sind synchron', () => {
+  const root = path.join(__dirname, '..');
+  for (const rel of ['extension/chessable-activity.js', 'extension/chessable-fen.js', 'repcheck.user.js']) {
+    const src = fs.readFileSync(path.join(root, rel), 'utf8');
+    const i = src.indexOf('function isNavLabel');
+    assert.ok(i > 0, rel + ': isNavLabel fehlt');
+    const body = src.slice(i, i + 1200);
+    assert.ok(body.includes('|leaderboard)$'), rel + ': leaderboard-Filter fehlt');
+    assert.ok(body.includes('^(kapitel|chapter)\\s*\\d*\\s*:?$'), rel + ': Kapitel-Filter fehlt');
+  }
 });

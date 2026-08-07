@@ -39,6 +39,23 @@ function parseCourseNameMap(data) {
   return map;
 }
 
+// Navigations-/Modus-/UI-Labels, die KEIN Kursname sind. Die Falle: solche Links zeigen ebenfalls
+// auf /course/{id}/… und verdrängten deshalb den echten Titel — gemeldet wurden „Practice Moves",
+// „Leaderboard" oder „Kapitel 3:" als Kursname. Drei Laufzeit-Kopien (chessable-activity.js,
+// chessable-fen.js, repcheck.user.js) sind historisch auseinandergelaufen; diese Fassung ist der
+// Stand, gegen den sie abgeglichen werden (hier testbar).
+function isNavLabel(txt) {
+  const t = String(txt || '').toLowerCase().trim();
+  // Eigenständige Nav-/Modus-/UI-Labels (exakter Match — echte Titel wie „Learn Chess Openings" bleiben).
+  if (/^(practice( moves)?|learn( moves)?|review|overview|variations?|move ?trainer|next|previous|prev|continue|weiter|home|leaderboard)$/.test(t)) return true;
+  // „Next/Previous chapter|variation|move|line" bzw. deutsche Entsprechungen.
+  if (/^(next|previous|prev|nächst\w*|naechst\w*|vorherig\w*|vorig\w*|letzt\w*)\b/.test(t)
+      && /(chapter|variation|move|line|kapitel|variante|zug|linie)/.test(t)) return true;
+  // Kapitel-Überschriften („Kapitel 3:", „Chapter 12") — Seitentext, kein Kurstitel.
+  if (/^(kapitel|chapter)\s*\d*\s*:?$/.test(t)) return true;
+  return false;
+}
+
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { decodeChessableUid, parseCourseNameMap };
+  module.exports = { decodeChessableUid, parseCourseNameMap, isNavLabel };
 }

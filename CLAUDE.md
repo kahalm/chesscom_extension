@@ -234,7 +234,7 @@ extension/
 ├── chessable-token.js    # Content-Script (isoliert) auf chessable.com: liest localStorage-JWT → chrome.storage.local
 ├── chessable-activity.js # Content-Script (isoliert) auf chessable.com: misst aktive Trainingszeit → POST an RookHub; hält zudem den Browser-Kurs-Import-Zustand (Crawl/Mitschnitt/Live/Fortschritt) + chrome.runtime.onMessage-Bridge (`{type:'rc-import'}`), gesteuert vom Popup (kein On-Page-Panel mehr; ✓/○-Marker an den Linien bleiben)
 ├── chessable-fen.js      # Content-Script (world: "MAIN") auf chessable.com: FEN-Copy/Search-Buttons + XP-Anzeige
-├── lib/chessable-course-names.js # reine Spiegel-Logik (uid-Decode + getHomeData-Parsing) für Node-Tests
+├── lib/chessable-course-names.js # reine Spiegel-Logik (uid-Decode + getHomeData-Parsing + isNavLabel) für Node-Tests; isNavLabel hat DREI Laufzeit-Kopien (chessable-activity.js, chessable-fen.js, repcheck.user.js) — Drift-Guard-Test in test/chessable-course-names.test.js
 ├── background.js       # Service-Worker, proxied RookHub-Fetches (CORS-frei)
 ├── popup.html / .js    # Toolbar-Button: Cache-Status + „Chessable-Token kopieren" + Sharebar + RookHub-Import (Browser) auf chessable.com [Ziel/Crawl/Mitschnitt/Live/Fortschritt, pollt chessable-activity.js per rc-import; Extension-only] + Chessable-Button-Einstellungen [chrome.storage.local `chessableButtons`, pro Button ein-/ausblendbar]. „Einstellungen"-Knopf: chess.com/lichess → In-Page-Panel (openSettings), sonst (chessable) → klappt die Chessable-Button-Toggles hier im Popup auf
 ├── icons/              # 16/48/128 PNG

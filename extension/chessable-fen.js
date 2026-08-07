@@ -861,13 +861,18 @@
   // (z. B. „Practice Moves", „Learn Moves", „Review", „nächstes Kapitel", „Previous variation").
   // Diese Links/Labels zeigen ebenfalls auf /course/{id}/… bzw. beschriften den Modus und haben
   // sonst den echten Titel verdrängt (Beispiel: gemeldeter Kursname „Practice Moves"/„Learn Moves").
+  // Spiegel von lib/chessable-course-names.js `isNavLabel` — bei Änderungen dort UND in
+  // chessable-activity.js/repcheck.user.js nachziehen (diese Kopie hing zurück und ließ
+  // „Leaderboard"/„Kapitel N" als Kursname durch).
   function isNavLabel(txt) {
-    const t = txt.toLowerCase().trim();
+    const t = String(txt || '').toLowerCase().trim();
     // Eigenständige Nav-/Modus-/UI-Labels (exakter Match — echte Titel wie „Learn Chess Openings" bleiben).
-    if (/^(practice( moves)?|learn( moves)?|review|overview|variations?|move ?trainer|next|previous|prev|continue|weiter|home)$/.test(t)) return true;
+    if (/^(practice( moves)?|learn( moves)?|review|overview|variations?|move ?trainer|next|previous|prev|continue|weiter|home|leaderboard)$/.test(t)) return true;
     // „Next/Previous chapter|variation|move|line" bzw. deutsche Entsprechungen.
     if (/^(next|previous|prev|nächst\w*|naechst\w*|vorherig\w*|vorig\w*|letzt\w*)\b/.test(t)
         && /(chapter|variation|move|line|kapitel|variante|zug|linie)/.test(t)) return true;
+    // Kapitel-Überschriften („Kapitel 3:", „Chapter 12") — Seitentext, kein Kurstitel.
+    if (/^(kapitel|chapter)\s*\d*\s*:?$/.test(t)) return true;
     return false;
   }
 
@@ -912,7 +917,10 @@
       if (candidates.length) return candidates.sort((a, b) => b.length - a.length)[0];
     }
     const t = (document.title || '').replace(/\s*[|\-–]\s*Chessable.*$/i, '').trim();
-    return t || null;
+    // Auch der Seitentitel kann ein Nav-Label sein („Leaderboard | Chessable") — sonst landet
+    // der als courseName in training-activity/remember-line (gleiche Regel wie in
+    // chessable-activity.js).
+    return (t && !isNavLabel(t)) ? t : null;
   }
 
   // Kurs-ID (+ Name) an die isolierte Welt (chessable-activity.js) spiegeln: dort ist der
