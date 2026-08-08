@@ -71,7 +71,16 @@ Was noch manuell erledigt werden muss, bevor die Extension öffentlich veröffen
 
 ## Chessable-Trainingsmodus (User-Wunsch 2026-08-08)
 
-- [ ] **Pfeile/Markierungen fehlen im Vollbild (Zen-Modus)**
+- [ ] **Pfeile/Markierungen fehlen im Vollbild (Zen-Modus)** — MESSUNG 08.08. ausgewertet, noch offen
+  Ergebnis der Dumps (`snapshotPfeile*.json`): das einzige `<svg>` IM Brett ist Chessables
+  Hintergrund (`board-blue-fallback chessboard-bg`, `z-index:-1`) — es skaliert im Zen korrekt mit
+  (499×500 → 834×834). Ein Pfeil-/Annotations-Layer war in BEIDEN Snapshots **gar nicht im DOM**,
+  also war zum Messzeitpunkt kein Pfeil aktiv. Dafür ist der Mechanismus jetzt bekannt und belegt:
+  Chessables Zug-Rückmeldung sitzt in `.board-footer` (in `#row-practice__col2`), also AUSSERHALB
+  des Bretts — und liegt damit hinter unserem Zen-Backdrop (z-index 2147483600). Pfeile dürften
+  denselben Weg gehen. Nächster Schritt: EIN Snapshot, während ein Pfeil sichtbar ist (Inspector
+  v0.2.0 erfasst `overlays` dokumentweit) — dann ist entschieden, ob ein gezieltes Hochziehen des
+  Layers reicht.
   Auf chessable.com zeigt das Brett im Zen-Vollbild die Pfeile/Feld-Markierungen nicht mehr an,
   die im Normalmodus da sind. Vermutung (zu prüfen): Chessable rendert sie in einem eigenen
   Layer/SVG, der außerhalb des Brett-Elements hängt und deshalb hinter dem Backdrop landet bzw.
@@ -80,7 +89,7 @@ Was noch manuell erledigt werden muss, bevor die Extension öffentlich veröffen
   Erst mit dem Debug-Inspector (`debug/chessable-inspector.user.js`) einen Snapshot im Normal- und
   im Zen-Modus vergleichen, dann den Layer gezielt hochziehen.
 
-- [ ] **Zug-Feedback anzeigen: Overstudy vs. +XP**
+- [x] **Zug-Feedback anzeigen: Overstudy vs. +XP** — ERLEDIGT v1.40.0
   Nach einem Zug zeigt Chessable an, ob der Zug „overstudied" war oder wieviel XP er gebracht hat.
   Das soll RepCheck ebenfalls sichtbar machen (der Nutzer sieht es im Zen-Modus sonst nicht).
   Quelle ist vermutlich `[data-testid="moveNotification"]` — genau der Knoten, den der frühere
@@ -133,7 +142,7 @@ Was noch manuell erledigt werden muss, bevor die Extension öffentlich veröffen
   Trainingszeit-Messung); der `ZEN_RESTORE_KEY`-Mechanismus aus v1.39.0 ist die passende Stelle,
   um sie über den Reload zu retten.
 
-- [ ] **Gesamt-XP am Linienende aufklappbar machen** (User-Wunsch 2026-08-08)
+- [x] **Gesamt-XP am Linienende aufklappbar machen** — TEILWEISE ERLEDIGT v1.40.0 (RepCheck schlüsselt die SELBST erfassten Einzelbeträge auf; Chessables eigene Endsumme wird nicht ausgelesen, Boni am Linienende fehlen deshalb — im Panel ausgewiesen)
   Am Ende einer Linie zeigt Chessable die Gesamt-XP (in beiden Modi). Diese Summe soll klickbar
   sein und die **Einzelbeträge** zeigen, aus denen sie sich zusammensetzt. Hängt direkt am
   Zug-Feedback oben: wenn RepCheck die Pro-Zug-Meldungen ohnehin mitschneidet, ist die
@@ -142,7 +151,13 @@ Was noch manuell erledigt werden muss, bevor die Extension öffentlich veröffen
   Boni am Linienende) — sonst muss die Aufschlüsselung als „erfasste Einzelbeträge" beschriftet
   werden statt als Zerlegung der Summe. Erfasst wird das mit Inspector v0.2.0 (`xpAnzeigen`).
 
-- [ ] **Restliche Linien im Trainingspool anzeigen**
+- [ ] **Restliche Linien im Trainingspool anzeigen** — MESSUNG 08.08.: Quelle NICHT gefunden
+  Der Inspector fand am Brett-Ast weder einen `[role="progressbar"]` noch ein „x/y"-Muster in
+  `.row-practice` (nur die Brett-Koordinaten 8/7/6/5) und in den React-Props nur
+  `collapseMoveTrainerHeader`. Die Zahl steckt also nicht am Brett. Nächster Anlauf: Anker weiter
+  oben (Move-Trainer-Header, evtl. eingeklappt) oder Chessables Session-State weiter oben im
+  Fiber-Baum — dafür müsste der Inspector vom `.row-practice`-Container aus nach oben walken statt
+  vom Brett.
   Irgendwo sichtbar machen, wieviele Linien im aktuellen Trainingspool noch offen sind.
   Datenquelle klären: Chessables eigene Fortschrittsanzeige (DOM) oder der bereits vorhandene
   Fortschritts-Abruf (`ensureProgress` → `getCourse?includeVariations=true` in

@@ -289,49 +289,165 @@
     return `https://www.chessable.com/courses/fen/${encoded}/`;
   }
 
-  // ---------- Points tracker ----------
+  // ---------- Zug-Rückmeldung: Overstudied / +XP, mit Aufschlüsselung ----------
   //
-  // Beobachtet <span data-testid="moveNotification">. Steht da "XP", wird der
-  // Wert aus dem Geschwister-<span class="current-points"> gelesen.
-  // "Overstudied"/"Incorrect"/"Alternative" werden ignoriert.
+  // Chessable zeigt seine Rückmeldung in `.board-footer` — also AUSSERHALB des Brett-Elements
+  // und damit im Zen-Modus hinter unserem Backdrop. Statt fremdes DOM hochzuziehen (fragil,
+  // Chessable positioniert die Leiste selbst), spiegeln wir den Text in unsere eigene Leiste.
+  //
+  // Gemessene Struktur (Inspector v0.2.0, Aufnahme vom 08.08.):
+  //   <div class="sc-…">                          ← Wrapper, wandert in .board-footer
+  //     <span class="icon-circle-wrapper">        ← Zustands-Icons, sprachunabhängig:
+  //       <i class="icon icon--correct …">        ←   correct | wrong | alt | give-up | time-up
+  //     <div class="sc-…"><span class="current-points">+60&nbsp;</span></div>   ← nur bei XP
+  //     <span class="notification-text" data-testid="moveNotification">XP|Overstudied</span>
+  // Der Text wird bewusst nur GESPIEGELT, nicht interpretiert: „Overstudied" heißt in einer
+  // anderen Chessable-Sprache anders, der Betrag steckt in `.current-points`. Klassifiziert wird
+  // nur für die Farbe — und zwar über die Icon-Klasse, nicht über den Text.
 
-  let lastXP = null;
-  let pointsObserver = null;
-  let watchedNotif = null;
+  const FEEDBACK_ID = 'repcheck-chessable-feedback';
+  const FEEDBACK_LIST_ID = 'repcheck-chessable-feedback-list';
+  /** Einträge der laufenden Linie: { text, xp, zeit }. Wird beim Linienwechsel geleert. */
+  let lineFeedback = [];
+  let feedbackObserver = null;
+  let watchedFeedbackRoot = null;
 
-  function initPointsTracker() {
-    const notif = document.querySelector('[data-testid="moveNotification"]');
-    if (!notif) return;
+  /** Betrag aus „+60 " bzw. aus dem Gesamttext ziehen; null, wenn es kein XP-Ereignis ist. */
+  function parseXp(pointsText, fullText) {
+    const src = (pointsText || fullText || '').replace(/ /g, ' ');
+    const m = /([+-]?\d[\d.,]*)/.exec(src);
+    if (!m) return null;
+    const n = parseFloat(m[1].replace(/[.,](?=\d{3}\b)/g, '').replace(',', '.'));
+    return Number.isFinite(n) ? n : null;
+  }
 
-    if (watchedNotif && watchedNotif !== notif) {
-      pointsObserver?.disconnect();
-      pointsObserver = null;
+  /** Zustand aus der SICHTBAREN Icon-Klasse (sprachunabhängig), sonst null. */
+  function feedbackKind(root) {
+    for (const icon of root.querySelectorAll('.icon-circle-wrapper .icon')) {
+      const cs = getComputedStyle(icon);
+      if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') continue;
+      const cls = String(icon.className);
+      if (cls.includes('icon--correct')) return 'correct';
+      if (cls.includes('icon--wrong')) return 'wrong';
+      if (cls.includes('icon--alt')) return 'alt';
+      if (cls.includes('icon--give-up')) return 'giveup';
+      if (cls.includes('icon--time-up')) return 'timeup';
     }
-    if (pointsObserver) return;
-    watchedNotif = notif;
-
-    pointsObserver = new MutationObserver(() => {
-      if (notif.textContent.trim() === 'XP') {
-        const pointsEl = document.querySelector('span.current-points');
-        if (pointsEl) {
-          lastXP = pointsEl.textContent.replace(/[\s ]+/g, '');
-          updatePointsDisplay();
-        }
-      }
-    });
-    pointsObserver.observe(notif, { childList: true, characterData: true, subtree: true });
+    return null;
   }
 
-  function updatePointsDisplay() {
-    const el = document.getElementById('repcheck-chessable-last-xp');
-    if (!el || !lastXP) return;
-    el.textContent = lastXP + ' XP';
-    el.style.display = 'inline-block';
+  const FEEDBACK_COLORS = {
+    correct: '#2e7d32', wrong: '#c62828', alt: '#1565c0', giveup: '#6a1b9a', timeup: '#ef6c00',
+  };
+
+  function initFeedbackTracker() {
+    const notif = document.querySelector('[data-testid="moveNotification"]');
+    const root = notif && notif.parentElement;
+    if (!root) return;
+    if (watchedFeedbackRoot === root && feedbackObserver) return;
+    feedbackObserver?.disconnect();
+    watchedFeedbackRoot = root;
+
+    let letzter = '';
+    const lesen = () => {
+      const text = (root.textContent || '').replace(/ /g, ' ').trim();
+      if (!text || text === letzter) return;
+      letzter = text;
+      const points = root.querySelector('.current-points');
+      const xp = parseXp(points && points.textContent, text);
+      lineFeedback.push({ text, xp, kind: feedbackKind(root) });
+      renderFeedback();
+    };
+    lesen();
+    feedbackObserver = new MutationObserver(lesen);
+    feedbackObserver.observe(root, { childList: true, characterData: true, subtree: true, attributes: true });
   }
 
-  function hidePointsDisplay() {
-    const el = document.getElementById('repcheck-chessable-last-xp');
-    if (el) el.style.display = 'none';
+  /** Summe der erfassten Beträge (nur die, die wirklich einen Betrag hatten). */
+  function feedbackSum() {
+    return lineFeedback.reduce((s, e) => s + (e.xp || 0), 0);
+  }
+
+  function renderFeedback() {
+    const badge = document.getElementById(FEEDBACK_ID);
+    if (!badge) return;
+    const last = lineFeedback[lineFeedback.length - 1];
+    if (!last) { badge.style.display = 'none'; hideFeedbackList(); return; }
+    const sum = feedbackSum();
+    // Angezeigt wird die letzte Meldung; sobald mehrere Beträge zusammenkommen, die Summe dazu.
+    badge.textContent = sum && lineFeedback.filter((e) => e.xp).length > 1
+      ? `${last.text} · Σ ${sum > 0 ? '+' : ''}${sum}`
+      : last.text;
+    badge.style.background = FEEDBACK_COLORS[last.kind] || 'rgba(0,0,0,0.45)';
+    badge.style.display = 'inline-flex';
+    badge.title = 'Zug-Rückmeldung — klicken für die Einzelbeträge dieser Linie';
+    const list = document.getElementById(FEEDBACK_LIST_ID);
+    if (list && list.style.display !== 'none') renderFeedbackList();
+  }
+
+  function renderFeedbackList() {
+    let list = document.getElementById(FEEDBACK_LIST_ID);
+    if (!list) {
+      list = document.createElement('div');
+      list.id = FEEDBACK_LIST_ID;
+      Object.assign(list.style, {
+        position: 'fixed', bottom: '58px', right: '16px', zIndex: '2147483647',
+        maxHeight: '50vh', overflowY: 'auto', minWidth: '190px',
+        background: 'rgba(0,0,0,0.85)', color: '#fff', borderRadius: '8px',
+        padding: '8px 10px', font: '12px/1.5 system-ui, sans-serif',
+        boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
+      });
+      document.body.appendChild(list);
+    }
+    const zeilen = lineFeedback.map((e, i) => {
+      const betrag = e.xp != null ? `${e.xp > 0 ? '+' : ''}${e.xp}` : '—';
+      return `<div style="display:flex;gap:10px;justify-content:space-between">
+        <span style="opacity:.65">${i + 1}.</span>
+        <span style="flex:1">${e.text.replace(/[<>&]/g, '')}</span>
+        <span style="font-variant-numeric:tabular-nums">${betrag}</span></div>`;
+    }).join('');
+    const sum = feedbackSum();
+    list.innerHTML = `<div style="opacity:.7;margin-bottom:4px">Diese Linie — erfasste Meldungen</div>${zeilen}
+      <div style="border-top:1px solid rgba(255,255,255,.25);margin-top:6px;padding-top:4px;display:flex;justify-content:space-between">
+        <span>Summe der erfassten Beträge</span>
+        <span style="font-variant-numeric:tabular-nums">${sum > 0 ? '+' : ''}${sum}</span></div>
+      <div style="opacity:.55;margin-top:4px;font-size:11px">Chessables Gesamtsumme kann abweichen
+        (Boni am Linienende zählt RepCheck nicht mit).</div>`;
+    list.style.display = 'block';
+  }
+
+  function hideFeedbackList() {
+    const list = document.getElementById(FEEDBACK_LIST_ID);
+    if (list) list.style.display = 'none';
+  }
+
+  function toggleFeedbackList() {
+    const list = document.getElementById(FEEDBACK_LIST_ID);
+    if (list && list.style.display === 'block') hideFeedbackList();
+    else if (lineFeedback.length) renderFeedbackList();
+  }
+
+  /** Neue Linie → Einträge verwerfen (sonst summiert sich alles über die Sitzung auf). */
+  /** Chessables "Next variation"/"Weiter" beendet die Linie -> Eintraege der naechsten
+   *  Linie frisch beginnen. Ein Klick auf UNSEREN Pfeil-Knopf zaehlt genauso (er klickt
+   *  Chessables Knopf durch). */
+  let lineResetAttached = false;
+  function attachLineResetListener() {
+    if (lineResetAttached) return;
+    lineResetAttached = true;
+    document.body.addEventListener('click', (e) => {
+      const el = e.target instanceof Element ? e.target.closest('button, a, [role="button"]') : null;
+      if (!el) return;
+      const t = (el.textContent || '').trim();
+      if (/^(next( variation| chapter| move| line)?|weiter)$/i.test(t) || el.id === 'repcheck-zen-next') resetLineFeedback();
+    }, true);
+  }
+
+  function resetLineFeedback() {
+    lineFeedback = [];
+    hideFeedbackList();
+    const badge = document.getElementById(FEEDBACK_ID);
+    if (badge) badge.style.display = 'none';
   }
 
   // ---------- UI ----------
@@ -640,7 +756,10 @@
     if (!wrap) return;
     if (zenActive()) {
       for (const child of wrap.children) {
-        const keep = child === btn || child === btnRefs.refresh || child === zenNextBtn || child === zenPanelBtn;
+        // Die Zug-Rueckmeldung bleibt im Zen sichtbar - sie ist dort der einzige Weg,
+        // Overstudied/+XP zu sehen (Chessables eigene Anzeige liegt hinterm Backdrop).
+        const keep = child === btn || child === btnRefs.refresh || child === zenNextBtn
+          || child === zenPanelBtn || child.id === FEEDBACK_ID;
         child.style.display = keep ? '' : 'none';
       }
     } else {
@@ -664,6 +783,19 @@
       display: 'flex',
       gap: '8px',
     });
+
+    // Zug-Rückmeldung (Overstudied / +XP). Liegt in UNSERER Leiste, weil Chessables eigene
+    // Anzeige in `.board-footer` sitzt — im Zen-Modus hinter dem Backdrop. Klick öffnet die
+    // Aufschlüsselung der Einzelbeträge dieser Linie.
+    const feedbackBadge = document.createElement('button');
+    feedbackBadge.id = FEEDBACK_ID;
+    feedbackBadge.type = 'button';
+    Object.assign(feedbackBadge.style, {
+      display: 'none', alignItems: 'center', padding: '6px 10px', border: 'none',
+      borderRadius: '6px', color: '#fff', font: '600 12px/1 system-ui, sans-serif',
+      cursor: 'pointer', background: 'rgba(0,0,0,0.45)',
+    });
+    feedbackBadge.addEventListener('click', toggleFeedbackList);
 
     const copyBtn = document.createElement('button');
     copyBtn.id = COPY_BTN_ID;
@@ -750,6 +882,7 @@
     // btnRefs (keine Popup-Toggles dafür).
     const zNext = document.createElement('button');
     zNext.type = 'button';
+    zNext.id = 'repcheck-zen-next';
     zNext.textContent = '▸';
     zNext.title = 'Next (nächste Variante/Kapitel)';
     styleButton(zNext, '#2e7d32');
@@ -768,6 +901,7 @@
 
     // XP-Anzeige vorerst deaktiviert (kommt später wieder) — Badge + Tracker aus.
     btnRefs = { copyFen: copyBtn, analyse: analyseBtn, searchFen: searchBtn, refresh: refreshBtn, remember: rememberBtn, fullscreen: fullscreenBtn };
+    wrap.appendChild(feedbackBadge);
     wrap.appendChild(copyBtn);
     wrap.appendChild(analyseBtn);
     wrap.appendChild(searchBtn);
@@ -859,21 +993,6 @@
     }, 1200);
   }
 
-  // XP zuruecksetzen, wenn der User "Next variation" klickt.
-  let nextVarListenerAttached = false;
-
-  function attachNextVariationListener() {
-    if (nextVarListenerAttached) return;
-    document.body.addEventListener('click', (e) => {
-      const btn = e.target.closest('button, a, [role="button"]');
-      if (!btn) return;
-      if (/^Next\s*(variation)?$/i.test(btn.textContent.trim())) {
-        lastXP = null;
-        hidePointsDisplay();
-      }
-    }, true);
-    nextVarListenerAttached = true;
-  }
 
   // Seit v1.14.0: die FEN-Tools erscheinen NUR im Practice-Mode
   // (chessable.com/practice/…) — auf Kurs-Übersichten/Buch-Seiten o. Ä. nicht.
@@ -883,17 +1002,18 @@
 
   function removeUi() {
     document.getElementById(CONTAINER_ID)?.remove();
-    pointsObserver?.disconnect();
-    pointsObserver = null;
-    watchedNotif = null;
+    feedbackObserver?.disconnect();
+    feedbackObserver = null;
+    watchedFeedbackRoot = null;
+    hideFeedbackList();
   }
 
   function ensureUi() {
     if (!isPracticeMode()) { removeUi(); return; }
     createUi();
+    initFeedbackTracker();   // Zug-Rueckmeldung mitschneiden (Overstudied / +XP)
+    attachLineResetListener();
     maybeRestoreZen();   // Zen-Aufbau nach einem Refresh zurückholen (ohne Browser-Vollbild)
-    // XP-Tracker vorerst deaktiviert (kommt später wieder):
-    //   initPointsTracker(); attachNextVariationListener(); if (lastXP) updatePointsDisplay();
   }
 
   if (document.body) ensureUi();
@@ -904,8 +1024,7 @@
   const mo = new MutationObserver(() => {
     if (!isPracticeMode()) { removeUi(); return; }
     if (!document.getElementById(CONTAINER_ID)) ensureUi();
-    else maybeRestoreZen();   // UI steht schon, Brett kommt bei Chessable oft später nach
-    // initPointsTracker(); // XP-Tracker vorerst deaktiviert
+    else { initFeedbackTracker(); maybeRestoreZen(); }   // Notification-Knoten wird bei SPA-Wechseln ersetzt   // UI steht schon, Brett kommt bei Chessable oft später nach
   });
   mo.observe(document.documentElement, { childList: true, subtree: true });
 
