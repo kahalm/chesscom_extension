@@ -69,6 +69,33 @@ Was noch manuell erledigt werden muss, bevor die Extension öffentlich veröffen
   - Permissions begründen: `host_permissions: https://*/*` → „User trägt seine eigene RookHub-Instanz ein, Extension muss dorthin Auth-Requests senden."
   - Submit → Review 1–3 Tage.
 
+## Chessable-Trainingsmodus (User-Wunsch 2026-08-08)
+
+- [ ] **Pfeile/Markierungen fehlen im Vollbild (Zen-Modus)**
+  Auf chessable.com zeigt das Brett im Zen-Vollbild die Pfeile/Feld-Markierungen nicht mehr an,
+  die im Normalmodus da sind. Vermutung (zu prüfen): Chessable rendert sie in einem eigenen
+  Layer/SVG, der außerhalb des Brett-Elements hängt und deshalb hinter dem Backdrop landet bzw.
+  nicht mit skaliert wird — analog zur Schwebefigur beim Drag&Drop, für die `body > .piece-417db`
+  schon eine z-Index-Regel im Zen-Style bekommt (`chessable-fen.js`, `ZEN_STYLE_ID`).
+  Erst mit dem Debug-Inspector (`debug/chessable-inspector.user.js`) einen Snapshot im Normal- und
+  im Zen-Modus vergleichen, dann den Layer gezielt hochziehen.
+
+- [ ] **Zug-Feedback anzeigen: Overstudy vs. +XP**
+  Nach einem Zug zeigt Chessable an, ob der Zug „overstudied" war oder wieviel XP er gebracht hat.
+  Das soll RepCheck ebenfalls sichtbar machen (der Nutzer sieht es im Zen-Modus sonst nicht).
+  Quelle ist vermutlich `[data-testid="moveNotification"]` — genau der Knoten, den der frühere
+  XP-Tracker (`initPointsTracker`, seit v1.14.3 deaktiviert, Code noch vorhanden) beobachtet hat.
+  Dort wurden „Overstudied"/„Incorrect"/„Alternative" bewusst ignoriert; jetzt sollen sie
+  unterschieden und angezeigt werden. Passende Stelle für die Anzeige suchen (Zen-Leiste?).
+
+- [ ] **Restliche Linien im Trainingspool anzeigen**
+  Irgendwo sichtbar machen, wieviele Linien im aktuellen Trainingspool noch offen sind.
+  Datenquelle klären: Chessables eigene Fortschrittsanzeige (DOM) oder der bereits vorhandene
+  Fortschritts-Abruf (`ensureProgress` → `getCourse?includeVariations=true` in
+  `chessable-activity.js`, liefert die Linien-Liste inkl. Status). Achtung: dieser Abruf läuft
+  seit v1.38.1 nur noch mit konfigurierter RookHub-Instanz — für eine reine Anzeige ohne RookHub
+  bräuchte es eine andere Quelle oder eine bewusste Ausnahme.
+
 ## Optional / Später
 
 - [ ] **Edge Add-ons Submission**
