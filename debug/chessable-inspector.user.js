@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RepCheck Chessable-Inspector (Debug)
 // @namespace    https://github.com/kahalm/repcheck
-// @version      0.4.0
+// @version      0.6.0
 // @description  Diagnose-Werkzeug: sammelt Brett-DOM/Geometrie/Drag-Traces sowie Trainings-Zähler (DOM, React-State, Seiten-State, Netzwerk) auf chessable.com als JSON (Zwischenablage + Download). NICHT für die Stores — nur zur Fehleranalyse.
 // @match        https://www.chessable.com/*
 // @match        https://chessable.com/*
@@ -141,20 +141,28 @@
       data.boardTailHtml = board.outerHTML.length > 120000 ? board.outerHTML.slice(-12000) : null;
       data.boardHtmlLength = board.outerHTML.length;
     }
-    data.overlays = collectOverlays(board);
-    data.notification = collectNotification();
-    data.xpAnzeigen = collectXpAnzeigen();
-    data.progress = collectProgress(board);
-    data.zaehler = collectZaehler();
-    data.practiceHtml = collectPracticeHtml();
-    data.drawer = collectDrawer();
-    data.seitenState = collectSeitenState();
-    data.speicher = collectSpeicher();
-    data.netzwerkBisher = collectResourceUrls();
-    data.bodyChildren = [...document.body.children].slice(0, 40).map((el) => ({
+    // Jeden Sammler EINZELN kapseln. Vorher riss ein einziger werfender Sammler den ganzen
+    // Dump mit — der Knopf blieb stumm im Aufnahme-Zustand stehen und man wusste nicht, woran
+    // es lag. Jetzt fehlt im schlimmsten Fall ein Feld, und der Fehler steht in `fehler`.
+    data.fehler = [];
+    const sammle = (name, fn) => {
+      try { data[name] = fn(); } catch (e) { data.fehler.push({ wo: name, fehler: String(e).slice(0, 200) }); data[name] = null; }
+    };
+    sammle('overlays', () => collectOverlays(board));
+    sammle('notification', () => collectNotification());
+    sammle('xpAnzeigen', () => collectXpAnzeigen());
+    sammle('progress', () => collectProgress(board));
+    sammle('zaehler', () => collectZaehler());
+    sammle('poolKandidat', () => collectPoolKandidat());
+    sammle('practiceHtml', () => collectPracticeHtml());
+    sammle('drawer', () => collectDrawer());
+    sammle('seitenState', () => collectSeitenState());
+    sammle('speicher', () => collectSpeicher());
+    sammle('netzwerkBisher', () => collectResourceUrls());
+    sammle('bodyChildren', () => [...document.body.children].slice(0, 40).map((el) => ({
       tag: el.tagName, id: el.id || null, class: String(el.className).slice(0, 80) || null,
       rect: rectOf(el), zIndex: getComputedStyle(el).zIndex, position: getComputedStyle(el).position,
-    }));
+    })));
     return data;
   }
 
@@ -264,6 +272,35 @@
         ? (eltern.parentElement.textContent || '').trim().slice(0, 220) : null,
       sichtbar: !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length),
     };
+  }
+
+  /**
+   * Gemeldeter Fundort des Pool-Zaehlers (Nutzer, 08.08.): `<span class="sc-hlqNbq iXetOK">68</span>`.
+   * Die styled-components-Klassen (`sc-…`, `iXetOK`) sind BUILD-generiert und aendern sich mit
+   * jedem Chessable-Deploy — als Selektor taugen sie also NICHT dauerhaft. Hier werden sie nur
+   * benutzt, um den Knoten EINMAL zu finden und sein Umfeld vollstaendig mitzunehmen; daraus
+   * laesst sich dann ein stabiler Anker (Beschriftung, data-testid, Position) ableiten.
+   */
+  function collectPoolKandidat() {
+    const treffer = [];
+    for (const el of document.querySelectorAll('span, div')) {
+      if (el.children.length) continue;
+      const t = (el.textContent || '').trim();
+      if (!/^\d{1,4}$/.test(t)) continue;
+      const cls = String(el.className);
+      if (!/\bsc-[A-Za-z]/.test(cls)) continue;          // styled-components-Knoten
+      const eltern = el.parentElement;
+      treffer.push({
+        text: t,
+        class: cls.slice(0, 120),
+        pfad: kurzPfad(el, 6),
+        rect: rectOf(el),
+        elternHtml: eltern ? eltern.outerHTML.slice(0, 1200) : null,
+        grosselternHtml: eltern && eltern.parentElement ? eltern.parentElement.outerHTML.slice(0, 3000) : null,
+      });
+      if (treffer.length >= 30) break;
+    }
+    return treffer;
   }
 
   /** Jeder kurze Text mit einer Ziffer — dokumentweit, samt Umfeld. Brett-Koordinaten fliegen
@@ -742,18 +779,122 @@
     }, seconds * 1000);
   }
 
+  /**
+   * Schlanke Aufnahme NUR fuer die Zug-Rueckmeldung. Die grosse Aufnahme sammelt fuer diese
+   * Frage viel zu viel (Drawer-HTML, Fiber-Scans, Netzwerk-Mitschnitt) — jeder dieser Sammler
+   * ist eine Stelle, an der die Aufnahme scheitern kann, bevor sie ankommt.
+   *
+   * Beantwortet genau eine Frage: feuert das DOM ueberhaupt, wenn dieselbe Meldung
+   * („+150 XP") ein zweites Mal erscheint — und wenn ja, mit welcher Mutations-Art?
+   */
+  function recordXp(seconds, done) {
+    const trace = {
+      kind: 'repcheck-inspector-recording-xp',
+      when: new Date().toISOString(),
+      url: location.href,
+      seconds,
+      fehler: [],
+      notifications: [],
+      zugSpur: [],
+    };
+    const t0 = performance.now();
+    const ts = () => +(performance.now() - t0).toFixed(1);
+    const sicher = (name, fn) => {
+      try { return fn(); } catch (e) { trace.fehler.push({ t: ts(), wo: name, fehler: String(e).slice(0, 200) }); return null; }
+    };
+
+    const plyJetzt = () => sicher('ply', () => {
+      const f = extractFenFromReact();
+      if (!f) return null;
+      const teile = f.trim().split(/\s+/);
+      const zug = parseInt(teile[5], 10);
+      return Number.isFinite(zug) ? { ply: (zug - 1) * 2 + (teile[1] === 'b' ? 1 : 0), fen: f } : null;
+    });
+
+    const notif = document.querySelector('[data-testid="moveNotification"]');
+    const root = (notif && notif.parentElement) || notif;
+    trace.notifGefunden = !!root;
+    let letzterKnoten = null;
+    let mo = null;
+    if (root) {
+      const lies = (records) => sicher('lies', () => {
+        const el = root.querySelector('[data-testid="moveNotification"]') || root;
+        const p = plyJetzt();
+        trace.notifications.push({
+          t: ts(),
+          text: (root.textContent || '').trim().slice(0, 120),
+          arten: records ? [...new Set(records.map((r) => r.type))] : ['(initial)'],
+          anzahl: records ? records.length : 0,
+          knotenNeu: el !== letzterKnoten,
+          ply: p ? p.ply : null,
+          html: root.innerHTML.slice(0, 600),
+        });
+        letzterKnoten = el;
+        if (trace.notifications.length >= 300 && mo) mo.disconnect();
+      });
+      lies();
+      mo = new MutationObserver(lies);
+      mo.observe(root, { childList: true, characterData: true, subtree: true, attributes: true });
+    }
+
+    // Zug-Spur: jede Aenderung der Halbzug-Nummer mit der dann sichtbaren Meldung. Zeigt, ob
+    // das BRETT ein brauchbarer Ausloeser waere und wie sich eine Ruecknahme verhaelt.
+    let letzterPly = null;
+    const spur = setInterval(() => {
+      const p = plyJetzt();
+      if (!p || p.ply === letzterPly) return;
+      letzterPly = p.ply;
+      const n = document.querySelector('[data-testid="moveNotification"]');
+      trace.zugSpur.push({
+        t: ts(), ply: p.ply, fen: p.fen,
+        meldung: n ? ((n.parentElement || n).textContent || '').trim().slice(0, 80) : null,
+      });
+      if (trace.zugSpur.length >= 300) clearInterval(spur);
+    }, 150);
+
+    setTimeout(() => {
+      if (mo) mo.disconnect();
+      clearInterval(spur);
+      done(trace);
+    }, seconds * 1000);
+  }
+
   // ── Ausgabe: Zwischenablage + Datei-Download ────────────────────────────
   function deliver(obj, btn, label) {
-    const json = JSON.stringify(obj, null, 1);
-    try { navigator.clipboard.writeText(json); } catch (e) { /* Download reicht */ }
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
-    a.download = `repcheck-inspector-${obj.kind.includes('record') ? 'recording' : 'snapshot'}-${Date.now()}.json`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-    const prev = btn.textContent;
-    btn.textContent = label;
-    setTimeout(() => { btn.textContent = prev; }, 2500);
+    // Fehlerfest: wenn hier etwas wirft (zu grosses JSON, blockierter Download, Clipboard),
+    // blieb der Knopf frueher stumm im Aufnahme-Zustand stehen und man wusste nicht, warum.
+    let json;
+    try {
+      json = JSON.stringify(obj, null, 1);
+    } catch (e) {
+      meldeFehler(btn, 'JSON fehlgeschlagen: ' + String(e).slice(0, 80));
+      return;
+    }
+    const groesse = Math.round(json.length / 1024);
+    try { navigator.clipboard.writeText(json).catch(() => {}); } catch (e) { /* Download reicht */ }
+    try {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
+      a.download = `repcheck-inspector-${obj.kind.includes('record') ? 'recording' : 'snapshot'}-${Date.now()}.json`;
+      document.body.appendChild(a);         // Firefox laedt nur an einem eingehaengten Anker
+      a.click();
+      setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 5000);
+    } catch (e) {
+      meldeFehler(btn, 'Download fehlgeschlagen (' + groesse + ' KB): ' + String(e).slice(0, 60));
+      return;
+    }
+    const prev = btn.dataset.rcLabel || btn.textContent;
+    btn.textContent = `${label} (${groesse} KB)`;
+    setTimeout(() => { btn.textContent = prev; }, 4000);
+  }
+
+  /** Fehler sichtbar machen statt stumm haengen zu bleiben — und in die Konsole. */
+  function meldeFehler(btn, text) {
+    console.error('[RepCheck Inspector]', text);
+    const prev = btn.dataset.rcLabel || btn.textContent;
+    btn.textContent = '⚠ ' + text.slice(0, 60);
+    btn.style.background = '#b71c1c';
+    setTimeout(() => { btn.textContent = prev; btn.style.background = btn.dataset.rcBg || '#455a64'; }, 8000);
   }
 
   // ── Panel ───────────────────────────────────────────────────────────────
@@ -776,8 +917,9 @@
   }
   const snapBtn = mkBtn('RC-Debug: Snapshot', '#455a64');
   snapBtn.addEventListener('click', () => {
-    const data = snapshot();
-    data.fiberScan = alleFiberScans();
+    let data;
+    try { data = snapshot(); } catch (e) { meldeFehler(snapBtn, 'snapshot: ' + String(e).slice(0, 70)); return; }
+    try { data.fiberScan = alleFiberScans(); } catch (e) { data.fiberScan = { fehler: String(e).slice(0, 200) }; }
     deliver(data, snapBtn, 'kopiert + Download ✓');
   });
   const recBtn = mkBtn('Record 6s', '#b71c1c');
@@ -793,8 +935,21 @@
     poolBtn.textContent = 'zeichnet 30 s auf … (Linie fertig spielen!)';
     record(30, (trace) => deliver(trace, poolBtn, 'kopiert + Download ✓'));
   });
+  // Schlank und gezielt fuer die XP-Frage: wenig Sammler, kleines JSON, wenig Fehlerquellen.
+  const xpBtn = mkBtn('Record 20s (XP)', '#00695c');
+  xpBtn.title = 'Nur die Zug-Rueckmeldung: protokolliert JEDES Feuern des Observers (auch bei '
+    + 'gleichem Text) samt Mutations-Art, Knotenwechsel und Halbzug-Nummer.';
+  xpBtn.addEventListener('click', () => {
+    xpBtn.textContent = 'zeichnet 20 s auf … (jetzt Zuege spielen!)';
+    recordXp(20, (trace) => deliver(trace, xpBtn, 'kopiert + Download ✓'));
+  });
+  for (const b of [snapBtn, recBtn, poolBtn, xpBtn]) {
+    b.dataset.rcLabel = b.textContent;
+    b.dataset.rcBg = b.style.background;
+  }
   panel.appendChild(snapBtn);
   panel.appendChild(recBtn);
   panel.appendChild(poolBtn);
+  panel.appendChild(xpBtn);
   document.body.appendChild(panel);
 })();
