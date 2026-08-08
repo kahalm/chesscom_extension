@@ -36,6 +36,13 @@ const REGIONEN = [
     indent: '  ',
   },
   {
+    name: 'chessable-feedback',
+    lib: 'extension/lib/chessable-feedback.js',
+    from: 'const RC_FEEDBACK_KINDS',
+    to: '// Node/CommonJS-Export',
+    indent: '  ',
+  },
+  {
     name: 'chessable-course-names',
     lib: 'extension/lib/chessable-course-names.js',
     from: 'function rcB64UrlDecode',

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RepCheck — Opening Repertoire Deviation Checker
 // @namespace    https://github.com/kahalm/repcheck
-// @version      1.45.0
+// @version      1.46.0
 // @require      https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js
 // @description  Shows where your game deviates from your opening repertoire (chess.com + lichess, PGN files or RookHub). On chessable.com: copy/search FEN, remember a line to RookHub, show earned XP, report active training time to RookHub, read the API token.
 // @author       kahalm
@@ -867,6 +867,36 @@
     ));
   }
   // <<<REPCHECK-SHARED:i18n
+
+  // ─── Shared Core: Zug-Rückmeldung ───────────────────────────────────
+  // GENERIERT aus extension/lib/chessable-feedback.js via `npm run build:userscript`.
+  // NICHT VON HAND EDITIEREN.
+  // >>>REPCHECK-SHARED:chessable-feedback
+  const RC_FEEDBACK_KINDS = ['correct', 'wrong', 'alt', 'giveup', 'timeup'];
+
+  /** Zustand aus einer Icon-Klassenliste; null, wenn keine bekannte Klasse dabei ist. */
+  function rcFeedbackKindFromClass(cls) {
+    const s = String(cls || '');
+    if (s.includes('icon--correct')) return 'correct';
+    if (s.includes('icon--wrong')) return 'wrong';
+    if (s.includes('icon--alt')) return 'alt';
+    if (s.includes('icon--give-up')) return 'giveup';
+    if (s.includes('icon--time-up')) return 'timeup';
+    return null;
+  }
+
+  /**
+   * Zählt der Zustand als Fehler für die Genauigkeit einer Linie?
+   *
+   * `alt` ist KEIN Fehler: ein alternativer Zug ist eine von Chessable akzeptierte Lösung, sie
+   * wird nur nicht als Hauptzug gewertet. `giveup`/`timeup` sind Fehler — wer aufgibt oder in die
+   * Zeit läuft, konnte die Linie nicht. Ein unbekannter Zustand (null) zählt NICHT als Fehler,
+   * damit eine Chessable-Änderung die Quote nicht still nach unten zieht.
+   */
+  function rcFeedbackIsFehler(kind) {
+    return kind === 'wrong' || kind === 'giveup' || kind === 'timeup';
+  }
+  // <<<REPCHECK-SHARED:chessable-feedback
 
   // ─── Shared Core: Chessable-Kursnamen ───────────────────────────────
   // GENERIERT aus extension/lib/chessable-course-names.js via `npm run build:userscript`
@@ -2837,6 +2867,8 @@
       if (now() - lastLineCountAt < 1500) return;
       lastLineCountAt = now();
       linesTrained++;
+      if (!lineHatFehler) linesCorrect++;
+      lineHatFehler = false;
       bump();
       reportTrainedLine();
     }
@@ -2889,6 +2921,17 @@
     // React-Node-Austausch) + Zeitfenster-Dedupe. Frueher (nur Text "XP", Observer am Knoten
     // selbst) wurden ~80-90 % der Zuege verschluckt.
     let notifObserver = null, watchedNotifParent = null, lastMoveCountAt = 0;
+    // Genauigkeit: je Zug der Zustand aus der Icon-Klasse (geteilte Region oben).
+    let movesCorrect = 0, linesCorrect = 0, lineHatFehler = false;
+    function feedbackKindOf(root) {
+      for (const icon of root.querySelectorAll('.icon-circle-wrapper .icon')) {
+        const cs = getComputedStyle(icon);
+        if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') continue;
+        const k = rcFeedbackKindFromClass(icon.className);
+        if (k) return k;
+      }
+      return null;
+    }
     function watchMoveNotif() {
       const n = document.querySelector('[data-testid="moveNotification"]');
       const parent = n && n.parentElement;
@@ -2900,7 +2943,12 @@
         const t = cur ? cur.textContent.trim() : '';
         if (!t) return;
         bump();
-        if (now() - lastMoveCountAt > 400) { movesTrained++; lastMoveCountAt = now(); }
+        if (now() - lastMoveCountAt > 400) {
+          movesTrained++; lastMoveCountAt = now();
+          const kind = feedbackKindOf(parent);
+          if (rcFeedbackIsFehler(kind)) lineHatFehler = true;
+          else if (kind) movesCorrect++;   // 'alt' zaehlt als richtig, unbekannt gar nicht
+        }
       });
       // `attributes` MUSS mit: eine wortgleiche Wiederholung („+150 XP" mehrfach) aendert weder
       // Text noch Knoten, sondern nur ein Attribut — ohne das feuert der Observer nicht und der
@@ -3050,7 +3098,7 @@
       const x = new Date(); const p2 = (n) => String(n).padStart(2, '0');
       return `${x.getFullYear()}-${p2(x.getMonth() + 1)}-${p2(x.getDate())}`;
     }
-    function rcDailyBuchen(secs, moves, lines) {
+    function rcDailyBuchen(secs, moves, lines, movesOk, linesOk) {
       if (!secs && !moves && !lines) return;
       try {
         const roh = (typeof GM_getValue === 'function' && GM_getValue('rcDailyStats')) || {};
@@ -3059,6 +3107,7 @@
         let h = days.find((d) => d.d === tag);
         if (!h) { h = { d: tag, s: 0, m: 0, l: 0 }; days.push(h); }
         h.s += secs || 0; h.m += moves || 0; h.l += lines || 0;
+        h.mok = (h.mok || 0) + (movesOk || 0); h.lok = (h.lok || 0) + (linesOk || 0);
         days.sort((a, b) => (a.d < b.d ? 1 : -1));
         if (typeof GM_setValue === 'function') GM_setValue('rcDailyStats', { days: days.slice(0, 14) });
       } catch (e) { /* Speicher nicht verfuegbar */ }
@@ -3072,13 +3121,15 @@
       const cfg = readConfig();
       lastFlush = now();
       if (!cfg || !cfg.url || !cfg.token) {
-        rcDailyBuchen(secs, movesTrained, linesTrained);   // lokale Statistik haengt nicht an RookHub
-        activeMs = 0; movesTrained = 0; linesTrained = 0; return;
+        rcDailyBuchen(secs, movesTrained, linesTrained, movesCorrect, linesCorrect);
+        activeMs = 0; movesTrained = 0; linesTrained = 0; movesCorrect = 0; linesCorrect = 0; return;
       }
 
       const moves = movesTrained;
       const lines = linesTrained;
-      activeMs = 0; movesTrained = 0; linesTrained = 0;
+      const movesOk = movesCorrect;
+      const linesOk = linesCorrect;
+      activeMs = 0; movesTrained = 0; linesTrained = 0; movesCorrect = 0; linesCorrect = 0;
       const url = String(cfg.url).replace(/\/$/, '') + '/api/extension/training-activity';
       fetch(url, {
         method: 'POST',
@@ -3091,9 +3142,9 @@
         },
         body: JSON.stringify({ secondsActive: secs, movesTrained: moves, linesTrained: lines, courseKind, courseId: currentCourseId(), courseName: bestCourseName() }),
       }).then((resp) => {
-        if (!resp.ok) { activeMs += secs * 1000; movesTrained += moves; linesTrained += lines; }
-        else rcDailyBuchen(secs, moves, lines);
-      }).catch(() => { activeMs += secs * 1000; movesTrained += moves; linesTrained += lines; });
+        if (!resp.ok) { activeMs += secs * 1000; movesTrained += moves; linesTrained += lines; movesCorrect += movesOk; linesCorrect += linesOk; }
+        else rcDailyBuchen(secs, moves, lines, movesOk, linesOk);
+      }).catch(() => { activeMs += secs * 1000; movesTrained += moves; linesTrained += lines; movesCorrect += movesOk; linesCorrect += linesOk; });
     }
 
     courseNameApi.ensureCourseNames(false); // Kursname-Karte vorwärmen
@@ -3393,17 +3444,16 @@
       return Number.isFinite(n) ? n : null;
     }
 
-    /** Zustand aus der SICHTBAREN Icon-Klasse (sprachunabhängig), sonst null. */
+    /** Zustand aus der SICHTBAREN Icon-Klasse (sprachunabhängig), sonst null.
+     *  Die Klassen-Zuordnung kommt aus lib/chessable-feedback.js — sie wird auch vom
+     *  Activity-Script gebraucht und darf nicht in Kopien auseinanderlaufen. */
     function feedbackKind(root) {
+      const map = rcFeedbackKindFromClass;
       for (const icon of root.querySelectorAll('.icon-circle-wrapper .icon')) {
         const cs = getComputedStyle(icon);
         if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') continue;
-        const cls = String(icon.className);
-        if (cls.includes('icon--correct')) return 'correct';
-        if (cls.includes('icon--wrong')) return 'wrong';
-        if (cls.includes('icon--alt')) return 'alt';
-        if (cls.includes('icon--give-up')) return 'giveup';
-        if (cls.includes('icon--time-up')) return 'timeup';
+        const k = map(icon.className);
+        if (k) return k;
       }
       return null;
     }
@@ -3956,7 +4006,7 @@
       const vortage = days.filter((d) => d.d !== tag && d.l > 0);
       const sum = vortage.reduce((a, d) => ({ s: a.s + d.s, l: a.l + d.l }), { s: 0, l: 0 });
       return {
-        heute: { sekunden: h.s, zuege: h.m, linien: h.l },
+        heute: { sekunden: h.s, zuege: h.m, linien: h.l, zuegeOk: h.mok || 0, linienOk: h.lok || 0 },
         schnitt: { tage: vortage.length, sekProLinie: sum.l ? Math.round(sum.s / sum.l) : null },
       };
     }
@@ -3998,6 +4048,13 @@
       if (heuteSchnitt != null) {
         const proZug = h.zuege > 0 ? ' · ' + (h.sekunden / h.zuege).toFixed(0) + ' s/Zug' : '';
         z.push(poolZeile('Ø je Linie heute', heuteSchnitt + ' s' + proZug));
+      }
+      if (h.linien > 0) {
+        // Richtig = kein Fehlzug, kein Aufgeben, kein Zeitablauf; ein akzeptierter
+        // Alternativzug zaehlt NICHT als Fehler.
+        const quote = Math.round((h.linienOk / h.linien) * 100);
+        const zq = h.zuege > 0 ? ' · ' + Math.round((h.zuegeOk / h.zuege) * 100) + ' % Zuege' : '';
+        z.push(poolZeile('Genauigkeit heute', quote + ' % (' + h.linienOk + '/' + h.linien + ')' + zq));
       }
       if (h.sekunden > 0) z.push(poolZeile('Aktive Zeit heute', poolDauer(h.sekunden)));
 

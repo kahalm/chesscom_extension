@@ -333,17 +333,16 @@
     return Number.isFinite(n) ? n : null;
   }
 
-  /** Zustand aus der SICHTBAREN Icon-Klasse (sprachunabhängig), sonst null. */
+  /** Zustand aus der SICHTBAREN Icon-Klasse (sprachunabhängig), sonst null.
+   *  Die Klassen-Zuordnung kommt aus lib/chessable-feedback.js — sie wird auch vom
+   *  Activity-Script gebraucht und darf nicht in Kopien auseinanderlaufen. */
   function feedbackKind(root) {
+    const map = (self.RepCheckFeedback && self.RepCheckFeedback.kindFromClass) || rcFeedbackKindFromClass;
     for (const icon of root.querySelectorAll('.icon-circle-wrapper .icon')) {
       const cs = getComputedStyle(icon);
       if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') continue;
-      const cls = String(icon.className);
-      if (cls.includes('icon--correct')) return 'correct';
-      if (cls.includes('icon--wrong')) return 'wrong';
-      if (cls.includes('icon--alt')) return 'alt';
-      if (cls.includes('icon--give-up')) return 'giveup';
-      if (cls.includes('icon--time-up')) return 'timeup';
+      const k = map(icon.className);
+      if (k) return k;
     }
     return null;
   }
@@ -607,6 +606,13 @@
     if (heuteSchnitt != null) {
       const proZug = h.zuege > 0 ? ' · ' + (h.sekunden / h.zuege).toFixed(0) + ' s/Zug' : '';
       zeilen.push(poolZeile('Ø je Linie heute', heuteSchnitt + ' s' + proZug));
+    }
+    if (h.linien > 0) {
+      // Eine Linie gilt als richtig, wenn in ihr kein Fehlzug, kein Aufgeben und kein
+      // Zeitablauf vorkam; ein akzeptierter Alternativzug zaehlt NICHT als Fehler.
+      const quote = Math.round((h.linienOk / h.linien) * 100);
+      const zugQuote = h.zuege > 0 ? ' · ' + Math.round((h.zuegeOk / h.zuege) * 100) + ' % Zuege' : '';
+      zeilen.push(poolZeile('Genauigkeit heute', quote + ' % (' + h.linienOk + '/' + h.linien + ')' + zugQuote));
     }
     if (h.sekunden > 0) zeilen.push(poolZeile('Aktive Zeit heute', poolDauer(h.sekunden)));
 

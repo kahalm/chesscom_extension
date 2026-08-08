@@ -90,6 +90,8 @@
     if (now() - lastLineCountAt < 1500) return;
     lastLineCountAt = now();
     linesTrained++;
+    if (!lineHatFehler) linesCorrect++;
+    lineHatFehler = false;                 // naechste Linie faengt sauber an
     bump();
     reportTrainedLine();
   }
@@ -162,6 +164,21 @@
   // alles darunter ist Animations-Flackern desselben Zuges. 800 ms verschluckte zusaetzlich
   // schnell gespielte Zuege.
   let notifObserver = null, watchedNotifParent = null, lastMoveCountAt = 0;
+  // Genauigkeit: je Zug der Zustand aus der Icon-Klasse (lib/chessable-feedback.js).
+  // `lineHatFehler` gilt fuer die LAUFENDE Linie und wird beim Linienwechsel ausgewertet.
+  let movesCorrect = 0, linesCorrect = 0, lineHatFehler = false;
+
+  /** Sichtbares Rueckmeldungs-Icon -> Zustand. DOM-Teil lokal, die Klassen-Zuordnung geteilt. */
+  function feedbackKindOf(root) {
+    const map = (self.RepCheckFeedback && self.RepCheckFeedback.kindFromClass) || (() => null);
+    for (const icon of root.querySelectorAll('.icon-circle-wrapper .icon')) {
+      const cs = getComputedStyle(icon);
+      if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') continue;
+      const k = map(icon.className);
+      if (k) return k;
+    }
+    return null;
+  }
   function watchMoveNotif() {
     const n = document.querySelector('[data-testid="moveNotification"]');
     const parent = n && n.parentElement;
@@ -173,7 +190,14 @@
       const t = cur ? cur.textContent.trim() : '';
       if (!t) return;
       bump();
-      if (now() - lastMoveCountAt > 400) { movesTrained++; lastMoveCountAt = now(); }
+      if (now() - lastMoveCountAt > 400) {
+        movesTrained++; lastMoveCountAt = now();
+        const kind = feedbackKindOf(parent);
+        const istFehler = (self.RepCheckFeedback && self.RepCheckFeedback.isFehler)
+          ? self.RepCheckFeedback.isFehler(kind) : false;
+        if (istFehler) lineHatFehler = true;
+        else if (kind) movesCorrect++;     // 'alt' zaehlt als richtig, unbekannt gar nicht
+      }
     });
     notifObserver.observe(parent, { childList: true, characterData: true, subtree: true, attributes: true });
   }
@@ -418,7 +442,7 @@
     });
   }
 
-  async function dailyBuchen(secs, moves, lines) {
+  async function dailyBuchen(secs, moves, lines, movesOk, linesOk) {
     if (!secs && !moves && !lines) return;
     const tag = tagesSchluessel();
     const days = await dailyLesen();
@@ -427,6 +451,8 @@
     heute.s += secs || 0;
     heute.m += moves || 0;
     heute.l += lines || 0;
+    heute.mok = (heute.mok || 0) + (movesOk || 0);
+    heute.lok = (heute.lok || 0) + (linesOk || 0);
     days.sort((a, b) => (a.d < b.d ? 1 : -1));          // neueste zuerst
     try { chrome.storage.local.set({ [DAILY_KEY]: { days: days.slice(0, DAILY_MAX_DAYS) } }); } catch (e) { /* egal */ }
   }
@@ -438,12 +464,14 @@
     const tag = tagesSchluessel();
     const heute = days.find((d) => d.d === tag) || { d: tag, s: 0, m: 0, l: 0 };
     const vortage = days.filter((d) => d.d !== tag && d.l > 0);
-    const summe = vortage.reduce((a, d) => ({ s: a.s + d.s, l: a.l + d.l }), { s: 0, l: 0 });
+    const summe = vortage.reduce((a, d) => ({ s: a.s + d.s, l: a.l + d.l, lok: a.lok + (d.lok || 0) }), { s: 0, l: 0, lok: 0 });
     return {
-      heute: { sekunden: heute.s, zuege: heute.m, linien: heute.l },
+      heute: { sekunden: heute.s, zuege: heute.m, linien: heute.l,
+               zuegeOk: heute.mok || 0, linienOk: heute.lok || 0 },
       schnitt: {
         tage: vortage.length,
         sekProLinie: summe.l ? Math.round(summe.s / summe.l) : null,
+        linienQuote: summe.l ? Math.round((summe.lok / summe.l) * 100) : null,
       },
     };
   }
@@ -458,14 +486,16 @@
     if (!cfg || !cfg.url || !cfg.token) {
       // Nicht mit RookHub verbunden → akkumulierte Zeit verwerfen (kein unbegrenztes Wachsen).
       // Die lokale Tagesstatistik bekommt sie trotzdem: sie hängt nicht an RookHub.
-      dailyBuchen(secs, movesTrained, linesTrained);
-      activeMs = 0; movesTrained = 0; linesTrained = 0;
+      dailyBuchen(secs, movesTrained, linesTrained, movesCorrect, linesCorrect);
+      activeMs = 0; movesTrained = 0; linesTrained = 0; movesCorrect = 0; linesCorrect = 0;
       return;
     }
 
     const moves = movesTrained;
     const lines = linesTrained;
-    activeMs = 0; movesTrained = 0; linesTrained = 0; // optimistisch zuruecksetzen
+    const movesOk = movesCorrect;
+    const linesOk = linesCorrect;
+    activeMs = 0; movesTrained = 0; linesTrained = 0; movesCorrect = 0; linesCorrect = 0; // optimistisch zuruecksetzen
     const baseUrl = String(cfg.url).replace(/\/$/, '');
     try {
       chrome.runtime.sendMessage({
@@ -486,14 +516,18 @@
           activeMs += secs * 1000;
           movesTrained += moves;
           linesTrained += lines;
+          movesCorrect += movesOk;
+          linesCorrect += linesOk;
         } else {
-          dailyBuchen(secs, moves, lines);
+          dailyBuchen(secs, moves, lines, movesOk, linesOk);
         }
       });
     } catch (e) {
       activeMs += secs * 1000;
       movesTrained += moves;
       linesTrained += lines;
+      movesCorrect += movesOk;
+      linesCorrect += linesOk;
     }
   }
 
