@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RepCheck Chessable-Inspector (Debug)
 // @namespace    https://github.com/kahalm/repcheck
-// @version      0.6.0
+// @version      0.6.1
 // @description  Diagnose-Werkzeug: sammelt Brett-DOM/Geometrie/Drag-Traces sowie Trainings-Zähler (DOM, React-State, Seiten-State, Netzwerk) auf chessable.com als JSON (Zwischenablage + Download). NICHT für die Stores — nur zur Fehleranalyse.
 // @match        https://www.chessable.com/*
 // @match        https://chessable.com/*
@@ -585,10 +585,20 @@
     const trace = {
       kind: 'repcheck-inspector-recording',
       when: new Date().toISOString(),
+      url: location.href,
       seconds,
-      snapshotBefore: snapshot(),
+      fehler: [],
       pointer: [], mutations: [], pieceRects: [],
     };
+    // `snapshot()` lief hier frueher UNGEKAPSELT und synchron im Klick-Handler: warf ein
+    // Sammler, stand der Knopf schon auf „zeichnet auf" und die Aufnahme startete nie.
+    // Genau so ist der 6-s- wie der 30-s-Knopf ausgefallen.
+    try {
+      trace.snapshotBefore = snapshot();
+    } catch (e) {
+      trace.snapshotBefore = null;
+      trace.fehler.push({ wo: 'snapshotBefore', fehler: String(e).slice(0, 200) });
+    }
     const t0 = performance.now();
     const ts = () => +(performance.now() - t0).toFixed(1);
 
@@ -768,13 +778,19 @@
       if (trace.__spurTimer) { clearInterval(trace.__spurTimer); delete trace.__spurTimer; }
       // Netzwerk unbedingt zurückbauen — ein hängengebliebener Wrapper würde die Seite
       // für den Rest der Sitzung belasten.
-      window.fetch = origFetch;
-      XMLHttpRequest.prototype.open = origOpen;
-      XMLHttpRequest.prototype.send = origSend;
+      try {
+        window.fetch = origFetch;
+        XMLHttpRequest.prototype.open = origOpen;
+        XMLHttpRequest.prototype.send = origSend;
+      } catch (e) { trace.fehler.push({ wo: 'netzwerk-rueckbau', fehler: String(e).slice(0, 200) }); }
       // Zum Vergleich: derselbe Zustand NACH der Aufnahme. Die Differenz der Zähler ist die
       // eigentliche Antwort auf „welcher Wert ist der Trainingspool".
-      trace.snapshotAfter = { zaehler: collectZaehler(), progress: collectProgress(boardAnchor()) };
-      trace.fiberScan = alleFiberScans();
+      // Auch der Abschluss gekapselt — sonst kostet ein werfender Sammler die FERTIGE Aufnahme.
+      try {
+        trace.snapshotAfter = { zaehler: collectZaehler(), progress: collectProgress(boardAnchor()) };
+      } catch (e) { trace.fehler.push({ wo: 'snapshotAfter', fehler: String(e).slice(0, 200) }); }
+      try { trace.fiberScan = alleFiberScans(); }
+      catch (e) { trace.fehler.push({ wo: 'fiberScan', fehler: String(e).slice(0, 200) }); }
       done(trace);
     }, seconds * 1000);
   }
@@ -925,7 +941,8 @@
   const recBtn = mkBtn('Record 6s', '#b71c1c');
   recBtn.addEventListener('click', () => {
     recBtn.textContent = 'zeichnet auf … (jetzt ziehen!)';
-    record(6, (trace) => deliver(trace, recBtn, 'kopiert + Download ✓'));
+    try { record(6, (trace) => deliver(trace, recBtn, 'kopiert + Download ✓')); }
+    catch (e) { meldeFehler(recBtn, 'record: ' + String(e).slice(0, 70)); }
   });
   // Für die Pool-Frage: lang genug, um eine Linie zu Ende zu spielen und weiterzuschalten.
   const poolBtn = mkBtn('Record 30s (Pool)', '#4527a0');
@@ -933,7 +950,8 @@
     + 'spielen und weiterschalten — danach zeigt der Dump, welcher Wert sich mitbewegt hat.';
   poolBtn.addEventListener('click', () => {
     poolBtn.textContent = 'zeichnet 30 s auf … (Linie fertig spielen!)';
-    record(30, (trace) => deliver(trace, poolBtn, 'kopiert + Download ✓'));
+    try { record(30, (trace) => deliver(trace, poolBtn, 'kopiert + Download ✓')); }
+    catch (e) { meldeFehler(poolBtn, 'record: ' + String(e).slice(0, 70)); }
   });
   // Schlank und gezielt fuer die XP-Frage: wenig Sammler, kleines JSON, wenig Fehlerquellen.
   const xpBtn = mkBtn('Record 20s (XP)', '#00695c');
@@ -941,7 +959,8 @@
     + 'gleichem Text) samt Mutations-Art, Knotenwechsel und Halbzug-Nummer.';
   xpBtn.addEventListener('click', () => {
     xpBtn.textContent = 'zeichnet 20 s auf … (jetzt Zuege spielen!)';
-    recordXp(20, (trace) => deliver(trace, xpBtn, 'kopiert + Download ✓'));
+    try { recordXp(20, (trace) => deliver(trace, xpBtn, 'kopiert + Download ✓')); }
+    catch (e) { meldeFehler(xpBtn, 'recordXp: ' + String(e).slice(0, 70)); }
   });
   for (const b of [snapBtn, recBtn, poolBtn, xpBtn]) {
     b.dataset.rcLabel = b.textContent;
