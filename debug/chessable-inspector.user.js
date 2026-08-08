@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         RepCheck Chessable-Inspector (Debug)
 // @namespace    https://github.com/kahalm/repcheck
-// @version      0.2.0
-// @description  Diagnose-Werkzeug: sammelt Brett-DOM/Geometrie/Drag-Traces auf chessable.com als JSON (Zwischenablage + Download). NICHT für die Stores — nur zur Fehleranalyse.
+// @version      0.3.0
+// @description  Diagnose-Werkzeug: sammelt Brett-DOM/Geometrie/Drag-Traces sowie Trainings-Zähler (DOM, React-State, Seiten-State, Netzwerk) auf chessable.com als JSON (Zwischenablage + Download). NICHT für die Stores — nur zur Fehleranalyse.
 // @match        https://www.chessable.com/*
 // @match        https://chessable.com/*
 // @grant        none
@@ -15,17 +15,45 @@
  * braucht, OHNE DevTools-Handarbeit:
  *   [Snapshot]  – Brett-Ankerkette (Geometrie + relevante Computed-Styles),
  *                 Feld-/Figuren-Beispiele, getrimmtes outerHTML, Viewport/
- *                 Fullscreen-Zustand.
- *   [Record 6s] – zeichnet 6 s lang Pointer-Events + Style-/Klassen-
- *                 Mutationen im Brettbereich + Rechteck der bewegten Figur
- *                 auf (fürs Debuggen von Drag&Drop/Animationen: einfach
- *                 während der Aufnahme eine Figur ziehen).
+ *                 Fullscreen-Zustand, Zähler-Kandidaten MIT Beschriftung,
+ *                 React-Props+Hook-State, Seiten-State, Speicher-Schlüssel.
+ *   [Record 6s] – zeichnet Pointer-Events + Style-/Klassen-Mutationen im
+ *                 Brettbereich + Rechteck der bewegten Figur auf (fürs
+ *                 Debuggen von Drag&Drop/Animationen: einfach während der
+ *                 Aufnahme eine Figur ziehen).
+ *   [Record 30s] – dasselbe über längere Zeit, gedacht für die Frage „woher
+ *                 kommt der Trainingspool-Zähler": eine Linie zu Ende spielen
+ *                 und weiterschalten, dann zeigen Netzwerk-Mitschnitt und
+ *                 Zähler-Verlauf, welcher Wert sich mitbewegt.
  * Ergebnis wird in die Zwischenablage kopiert UND als .json heruntergeladen.
+ *
+ * WICHTIG (Datenschutz): der Dump wandert zum Entwickler. Der Chessable-Bearer
+ * (localStorage `chessable.web.production.JWT`) und alles, was nach Token
+ * aussieht, wird deshalb ZENSIERT — siehe `istGeheim`. Beim Ergänzen neuer
+ * Sammler diese Regel mitziehen.
  */
 (() => {
   'use strict';
   const PANEL_ID = 'repcheck-inspector-panel';
   if (document.getElementById(PANEL_ID)) return;
+
+  // ── Datenschutz: nichts Geheimes in den Dump ────────────────────────────
+  const GEHEIM_KEY = /(token|jwt|auth|secret|passwor|bearer|credential|cookie|api[-_]?key)/i;
+  /** JWT-Form: drei base64url-Segmente. Fängt Tokens auch unter harmlosem Schlüsselnamen. */
+  const JWT_FORM = /^[\w-]{8,}\.[\w-]{8,}\.[\w-]{8,}$/;
+
+  function istGeheim(key, wert) {
+    if (GEHEIM_KEY.test(String(key))) return true;
+    const s = typeof wert === 'string' ? wert.trim() : '';
+    return JWT_FORM.test(s) || /^Bearer\s+\S+/i.test(s);
+  }
+  function zensiert(wert) {
+    return typeof wert === 'string' ? `«${wert.length} Zeichen zensiert»` : '«zensiert»';
+  }
+  /** Freitext (HTML, Response-Körper) von Token-artigen Zeichenfolgen befreien. */
+  function zensiereText(text) {
+    return String(text).replace(/[\w-]{12,}\.[\w-]{12,}\.[\w-]{12,}/g, '«JWT zensiert»');
+  }
 
   // ── Brett-Anker (gleiche Heuristik wie chessable-fen.js) ────────────────
   function boardAnchor() {
@@ -35,9 +63,28 @@
       || null;
   }
 
+  /** Die Practice-Spalte: der Container, in dem Brett UND Trainer-Kopf/Fortschritt leben.
+   *  Beleg aus den Dumps vom 08.08.: `row-practice row-practice--lesson-progress`. */
+  function practiceRow() {
+    const board = boardAnchor();
+    return (board && board.closest('[class*="row-practice"]'))
+      || document.querySelector('[class*="row-practice"]')
+      || null;
+  }
+
   function rectOf(el) {
     const r = el.getBoundingClientRect();
     return { left: +r.left.toFixed(1), top: +r.top.toFixed(1), width: +r.width.toFixed(1), height: +r.height.toFixed(1) };
+  }
+
+  function kurzPfad(el, tiefe) {
+    const teile = [];
+    for (let p = el, i = 0; p && i < tiefe; p = p.parentElement, i++) {
+      teile.push(p.tagName
+        + (p.id ? '#' + p.id : '')
+        + (p.className ? '.' + String(p.className).trim().split(/\s+/).slice(0, 2).join('.') : ''));
+    }
+    return teile.join(' < ');
   }
 
   function describe(el) {
@@ -98,6 +145,11 @@
     data.notification = collectNotification();
     data.xpAnzeigen = collectXpAnzeigen();
     data.progress = collectProgress(board);
+    data.zaehler = collectZaehler();
+    data.practiceHtml = collectPracticeHtml();
+    data.seitenState = collectSeitenState();
+    data.speicher = collectSpeicher();
+    data.netzwerkBisher = collectResourceUrls();
     data.bodyChildren = [...document.body.children].slice(0, 40).map((el) => ({
       tag: el.tagName, id: el.id || null, class: String(el.className).slice(0, 80) || null,
       rect: rectOf(el), zIndex: getComputedStyle(el).zIndex, position: getComputedStyle(el).position,
@@ -157,17 +209,13 @@
       const t = (el.textContent || '').trim();
       if (!t || t.length > 40) continue;
       if (!/(\d[\d.,]*\s*(XP|punkte|points)|overstud|korrekt|correct|incorrect|alternativ)/i.test(t)) continue;
-      const path = [];
-      for (let p = el, i = 0; p && i < 5; p = p.parentElement, i++) {
-        path.push(p.tagName + (p.id ? '#' + p.id : '') + (p.className ? '.' + String(p.className).trim().split(/\s+/).slice(0, 2).join('.') : ''));
-      }
-      out.push({ text: t, pfad: path.join(' < '), rect: rectOf(el), testid: el.closest('[data-testid]')?.getAttribute('data-testid') || null });
+      out.push({ text: t, pfad: kurzPfad(el, 5), rect: rectOf(el), testid: el.closest('[data-testid]')?.getAttribute('data-testid') || null });
       if (out.length >= 25) break;
     }
     return out;
   }
 
-  /** Trainingspool: Kandidaten für „noch offen" — React-Props am Brett-Ast + DOM in .row-practice. */
+  /** Trainingspool, alte Fassung (bleibt für die Vergleichbarkeit mit den Dumps vom 08.08.). */
   function collectProgress(board) {
     const zahlen = [];
     const row = board && board.closest('.row-practice');
@@ -190,13 +238,85 @@
     return { zahlen, bars, props: fiberProps(board, 40) };
   }
 
+  // ── Trainingspool-Zähler: breiter suchen und BESCHRIFTEN ────────────────
+  //
+  // Warum die alte Fassung nichts fand (Messung 08.08.): sie nahm nur Blattknoten unter
+  // `.row-practice`, die EXAKT „x/y", „x von y" oder „n%" hießen. Eine Zeile wie „180 XP" oder
+  // „3 lines left" fiel damit durchs Raster. Gefunden wurden zwar nackte Zahlen (100 %, 1, 180
+  // und ein 99er-SPAN) — aber ohne die umgebende Beschriftung ließ sich nicht sagen, was sie
+  // bedeuten, weil der Snapshot außerhalb des Bretts gar kein HTML mitnahm. Genau diese zwei
+  // Lücken schließen `collectZaehler` (Umfeld) und `collectPracticeHtml` (Struktur).
+
+  /** Beschriftung rund um ein Element — erst damit wird aus „180" eine Aussage. */
+  function umfeld(el) {
+    const eltern = el.parentElement;
+    const text = (n) => (n ? (n.textContent || '').trim().slice(0, 60) || null : null);
+    return {
+      pfad: kurzPfad(el, 5),
+      testid: el.closest('[data-testid]')?.getAttribute('data-testid') || null,
+      aria: el.getAttribute('aria-label') || el.closest('[aria-label]')?.getAttribute('aria-label') || null,
+      titel: el.getAttribute('title') || el.closest('[title]')?.getAttribute('title') || null,
+      vorher: text(el.previousElementSibling),
+      nachher: text(el.nextElementSibling),
+      elternText: eltern ? (eltern.textContent || '').trim().slice(0, 140) : null,
+      grosselternText: eltern && eltern.parentElement
+        ? (eltern.parentElement.textContent || '').trim().slice(0, 220) : null,
+      sichtbar: !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length),
+    };
+  }
+
+  /** Jeder kurze Text mit einer Ziffer — dokumentweit, samt Umfeld. Brett-Koordinaten fliegen
+   *  raus (die haben die Messung vom 08.08. zugemüllt). Bewusst großzügig: lieber 120 Kandidaten
+   *  mit Beschriftung als 4 nackte Zahlen. */
+  function collectZaehler() {
+    const out = [];
+    const row = practiceRow();
+    for (const el of document.querySelectorAll('body *')) {
+      if (el.children.length) continue;                       // nur Blattknoten
+      if (el.closest('#repcheck-inspector-panel, #repcheck-chessable-fen-tools')) continue;
+      if (el.closest('[class*="notation"], [data-square]')) continue;   // Brett-Koordinaten
+      const t = (el.textContent || '').trim();
+      if (!t || t.length > 32 || !/\d/.test(t)) continue;
+      out.push({ text: t, imPracticeRow: !!(row && row.contains(el)), ...umfeld(el), rect: rectOf(el) });
+      if (out.length >= 120) break;
+    }
+    return out;
+  }
+
+  /** Struktur der Practice-Spalte OHNE das Brett (das ist separat und riesig). Ohne diesen
+   *  Ausschnitt lassen sich die gefundenen Zahlen nicht einordnen. */
+  function collectPracticeHtml() {
+    const row = practiceRow();
+    if (!row) return { gefunden: false };
+    const klon = row.cloneNode(true);
+    // Brett rauswerfen: es macht den Löwenanteil des HTML aus und ist anderswo schon erfasst.
+    for (const b of klon.querySelectorAll('#board, [class*="chessboard"], [data-square]')) b.remove();
+    const html = zensiereText(klon.outerHTML);
+    return {
+      gefunden: true,
+      class: String(row.className).slice(0, 200),
+      rect: rectOf(row),
+      laengeOhneBrett: html.length,
+      html: html.slice(0, 90000),
+      ende: html.length > 90000 ? html.slice(-8000) : null,
+    };
+  }
+
+  // ── React: Props UND Hook-State, auf- und abwärts ───────────────────────
+
+  function fiberVon(el) {
+    if (!el) return null;
+    const key = Object.keys(el).find((k) => k.startsWith('__reactFiber$'));
+    return key ? el[key] : null;
+  }
+
   /** Props entlang der Fiber-Kette einsammeln — nur flache, plausible Schlüssel/Werte. */
   function fiberProps(el, depth) {
-    const key = el && Object.keys(el).find((k) => k.startsWith('__reactFiber$'));
-    if (!key) return null;
+    const fiber0 = fiberVon(el);
+    if (!fiber0) return null;
     const treffer = [];
     const interessant = /(remain|left|due|queue|pool|total|count|index|position|progress|line|variation|trainer|session|xp|point|overstud|correct|status|type)/i;
-    let fiber = el[key];
+    let fiber = fiber0;
     for (let i = 0; fiber && i < depth; fiber = fiber.return, i++) {
       for (const props of [fiber.memoizedProps, fiber.pendingProps]) {
         if (!props || typeof props !== 'object') continue;
@@ -221,9 +341,145 @@
     }).slice(0, 60);
   }
 
-  // ── Aufnahme: Pointer + Mutations + Figuren-Rects ───────────────────────
+  /** Ein einzelnes Fiber ausleuchten: Props FLACH (alle Schlüssel, nicht nur „interessante")
+   *  und der Hook-State. Letzterer ist der eigentliche Nachbesserungspunkt — die Messung vom
+   *  08.08. sah nur Props und fand deshalb ausschließlich `collapseMoveTrainerHeader`.
+   *  React hält den Zustand einer Funktionskomponente aber in `memoizedState`, einer
+   *  verketteten Liste von Hooks. */
+  function fiberDetail(fiber, tiefe, richtung) {
+    const name = typeof fiber.type === 'string' ? fiber.type
+      : (fiber.type && (fiber.type.displayName || fiber.type.name)) || null;
+    const eintrag = { tiefe, richtung, komponente: name, props: [], hooks: [] };
+
+    const props = fiber.memoizedProps;
+    if (props && typeof props === 'object' && !Array.isArray(props)) {
+      for (const [k, v] of Object.entries(props).slice(0, 40)) {
+        if (k === 'children') continue;
+        const t = typeof v;
+        if (t === 'number' || t === 'boolean') eintrag.props.push(k + '=' + v);
+        else if (t === 'string') eintrag.props.push(k + '=' + (istGeheim(k, v) ? zensiert(v) : v.slice(0, 50)));
+        else if (Array.isArray(v)) eintrag.props.push(k + '=Array(' + v.length + ')');
+        else if (v && t === 'object') eintrag.props.push(k + '={' + Object.keys(v).slice(0, 12).join(',') + '}');
+      }
+    }
+
+    let hook = fiber.memoizedState;
+    for (let n = 0; hook && n < 30; hook = hook.next, n++) {
+      const v = hook.memoizedState;
+      const t = typeof v;
+      if (t === 'number' || t === 'boolean') eintrag.hooks.push('#' + n + '=' + v);
+      else if (t === 'string') eintrag.hooks.push('#' + n + '=' + (istGeheim('', v) ? zensiert(v) : v.slice(0, 60)));
+      else if (Array.isArray(v)) eintrag.hooks.push('#' + n + '=Array(' + v.length + ')');
+      else if (v && t === 'object') {
+        // Nur Zahlen ausschreiben: genau die tragen einen Zähler.
+        const keys = Object.keys(v).slice(0, 30);
+        const zahlen = keys.filter((k) => typeof v[k] === 'number').map((k) => k + '=' + v[k]);
+        eintrag.hooks.push('#' + n + '={' + keys.join(',') + '}' + (zahlen.length ? ' → ' + zahlen.join(' ') : ''));
+      }
+    }
+    if (!eintrag.props.length && !eintrag.hooks.length) return null;
+    return eintrag;
+  }
+
+  /** Fiber-Baum um einen Anker herum abgrasen: `auf` Ebenen nach oben (Richtung Wurzel) und
+   *  bis `knoten` Fibers nach unten (Breitensuche über child/sibling). Nach unten zu gehen ist
+   *  neu — der Zähler sitzt vermutlich im Trainer-Kopf, also NEBEN dem Brett, nicht darüber. */
+  function fiberScan(el, auf, knoten) {
+    const start = fiberVon(el);
+    if (!start) return { gefunden: false };
+    const aufwaerts = [];
+    let f = start;
+    for (let i = 0; f && i < auf; f = f.return, i++) {
+      const d = fiberDetail(f, i, 'auf');
+      if (d) aufwaerts.push(d);
+    }
+    const abwaerts = [];
+    const queue = [[start, 0]];
+    const gesehen = new Set();
+    let besucht = 0;
+    while (queue.length && besucht < knoten) {
+      const [fib, tiefe] = queue.shift();
+      if (!fib || gesehen.has(fib)) continue;
+      gesehen.add(fib);
+      besucht++;
+      if (tiefe > 0) {
+        const d = fiberDetail(fib, tiefe, 'ab');
+        if (d) abwaerts.push(d);
+      }
+      if (tiefe < 12) {
+        if (fib.child) queue.push([fib.child, tiefe + 1]);
+        if (fib.sibling) queue.push([fib.sibling, tiefe]);
+      }
+    }
+    return { gefunden: true, besuchteFibers: besucht, aufwaerts, abwaerts: abwaerts.slice(0, 80) };
+  }
+
+  // ── Seiten-State und Speicher ──────────────────────────────────────────
+
+  /** Globaler Seiten-Zustand: bei React-Seiten hängt der Sitzungszustand oft komplett an einem
+   *  bekannten Fenster-Objekt (Next.js `__NEXT_DATA__`, Redux, Apollo). */
+  function collectSeitenState() {
+    const out = { nextDataScript: null, globale: [], windowKeys: [] };
+    const nd = document.getElementById('__NEXT_DATA__');
+    if (nd) out.nextDataScript = zensiereText(nd.textContent || '').slice(0, 60000);
+
+    for (const k of ['__NEXT_DATA__', '__APOLLO_STATE__', '__APOLLO_CLIENT__', '__REDUX_STATE__',
+      '__INITIAL_STATE__', '__PRELOADED_STATE__', '__NUXT__', 'dataLayer', 'chessable']) {
+      let v;
+      try { v = window[k]; } catch (e) { continue; }
+      if (v == null) continue;
+      out.globale.push({
+        key: k,
+        typ: Array.isArray(v) ? 'Array(' + v.length + ')' : typeof v,
+        keys: (typeof v === 'object' ? Object.keys(v).slice(0, 40) : null),
+      });
+    }
+    try {
+      out.windowKeys = Object.keys(window)
+        .filter((k) => /(state|store|app|chessable|session|user|trainer|course|progress)/i.test(k))
+        .slice(0, 60);
+    } catch (e) { /* egal */ }
+    return out;
+  }
+
+  /** Speicher-Schlüssel: Chessable legt Trainer-Zustand teilweise lokal ab. Werte werden
+   *  gekürzt, Token-artiges wird ZENSIERT (der Dump geht an den Entwickler). */
+  function collectSpeicher() {
+    const lies = (store, name) => {
+      const out = [];
+      try {
+        for (let i = 0; i < store.length && out.length < 60; i++) {
+          const k = store.key(i);
+          const v = store.getItem(k) || '';
+          out.push({
+            store: name, key: k, laenge: v.length,
+            wert: istGeheim(k, v) ? zensiert(v) : zensiereText(v).slice(0, 200),
+          });
+        }
+      } catch (e) {
+        out.push({ store: name, key: '(nicht lesbar)', fehler: String(e).slice(0, 120) });
+      }
+      return out;
+    };
+    return [...lies(localStorage, 'local'), ...lies(sessionStorage, 'session')];
+  }
+
+  /** Schon gelaufene Chessable-Aufrufe — nur URLs (Körper gibt es rückwirkend nicht mehr).
+   *  Zeigt, WELCHE Endpunkte überhaupt in Frage kommen; die Körper liefert die Aufnahme. */
+  function collectResourceUrls() {
+    try {
+      return performance.getEntriesByType('resource')
+        .map((e) => e.name)
+        .filter((u) => /\/(api|graphql|ajax)\b|getList|getGame|getCourse|getHomeData|practice/i.test(u))
+        .slice(-60)
+        .map((u) => u.slice(0, 300));
+    } catch (e) { return []; }
+  }
+
+  // ── Aufnahme: Pointer + Mutations + Figuren-Rects + Netzwerk + Zähler ───
   function record(seconds, done) {
     const board = boardAnchor();
+    const row = practiceRow();
     const trace = {
       kind: 'repcheck-inspector-recording',
       when: new Date().toISOString(),
@@ -272,6 +528,72 @@
       trace.notifications.push({ t: 0, text: '(kein [data-testid="moveNotification"] beim Start gefunden)' });
     }
 
+    // Zähler-VERLAUF: welche Zahl in der Practice-Spalte ändert sich, wenn eine Linie fertig
+    // wird? Genau das beantwortet die Frage nach dem Trainingspool — ein einzelner Snapshot
+    // kann es nicht, weil er den Wert nicht in Bewegung sieht.
+    trace.zaehlerVerlauf = [];
+    let letzteZaehler = '';
+    const zaehlerTimer = setInterval(() => {
+      const quelle = row || document.body;
+      const werte = [];
+      for (const el of quelle.querySelectorAll('*')) {
+        if (el.children.length) continue;
+        if (el.closest('#repcheck-inspector-panel, #repcheck-chessable-fen-tools')) continue;
+        if (el.closest('[class*="notation"], [data-square]')) continue;
+        const t = (el.textContent || '').trim();
+        if (!t || t.length > 32 || !/\d/.test(t)) continue;
+        werte.push(t);
+        if (werte.length >= 40) break;
+      }
+      const schluessel = werte.join('|');
+      if (schluessel !== letzteZaehler) {
+        letzteZaehler = schluessel;
+        trace.zaehlerVerlauf.push({ t: ts(), werte });
+      }
+    }, 500);
+
+    // Netzwerk-Mitschnitt: die Pool-Zahl kommt sehr wahrscheinlich aus einer Chessable-Antwort
+    // (getList/getCourse/getGame). fetch UND XHR werden für die Dauer der Aufnahme umhüllt und
+    // danach wieder zurückgesetzt — beides, weil ungewiss ist, was Chessable benutzt.
+    trace.netzwerk = [];
+    const merkeAntwort = (methode, url, koerper) => {
+      if (!/chessable\.com/i.test(url) && !url.startsWith('/')) return;
+      if (/\.(js|css|png|jpg|jpeg|svg|woff2?|gif|webp)(\?|$)/i.test(url)) return;
+      if (trace.netzwerk.length >= 40) return;
+      const roh = zensiereText(String(koerper || ''));
+      trace.netzwerk.push({
+        t: ts(), methode, url: url.slice(0, 300),
+        laenge: roh.length,
+        koerper: roh.slice(0, 8000),
+      });
+    };
+
+    const origFetch = window.fetch;
+    window.fetch = function (...args) {
+      const url = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url) || '';
+      const methode = (args[1] && args[1].method) || (args[0] && args[0].method) || 'GET';
+      return origFetch.apply(this, args).then((res) => {
+        // Klon lesen, damit die Seite ihre eigene Antwort unangetastet bekommt.
+        try { res.clone().text().then((txt) => merkeAntwort(methode, url, txt), () => {}); } catch (e) { /* egal */ }
+        return res;
+      });
+    };
+
+    const origOpen = XMLHttpRequest.prototype.open;
+    const origSend = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.open = function (methode, url, ...rest) {
+      this.__rcMethode = methode; this.__rcUrl = url;
+      return origOpen.call(this, methode, url, ...rest);
+    };
+    XMLHttpRequest.prototype.send = function (...args) {
+      this.addEventListener('load', () => {
+        let txt = '';
+        try { txt = this.responseType === '' || this.responseType === 'text' ? this.responseText : '(' + this.responseType + ')'; } catch (e) { txt = '(nicht lesbar)'; }
+        merkeAntwort(this.__rcMethode || 'GET', this.__rcUrl || '', txt);
+      });
+      return origSend.apply(this, args);
+    };
+
     let mo = null;
     if (board) {
       mo = new MutationObserver((muts) => {
@@ -303,6 +625,16 @@
       if (mo) mo.disconnect();
       if (notifMo) notifMo.disconnect();
       clearInterval(rectTimer);
+      clearInterval(zaehlerTimer);
+      // Netzwerk unbedingt zurückbauen — ein hängengebliebener Wrapper würde die Seite
+      // für den Rest der Sitzung belasten.
+      window.fetch = origFetch;
+      XMLHttpRequest.prototype.open = origOpen;
+      XMLHttpRequest.prototype.send = origSend;
+      // Zum Vergleich: derselbe Zustand NACH der Aufnahme. Die Differenz der Zähler ist die
+      // eigentliche Antwort auf „welcher Wert ist der Trainingspool".
+      trace.snapshotAfter = { zaehler: collectZaehler(), progress: collectProgress(boardAnchor()) };
+      trace.fiberScan = fiberScan(practiceRow() || boardAnchor(), 12, 400);
       done(trace);
     }, seconds * 1000);
   }
@@ -340,13 +672,26 @@
     return b;
   }
   const snapBtn = mkBtn('RC-Debug: Snapshot', '#455a64');
-  snapBtn.addEventListener('click', () => deliver(snapshot(), snapBtn, 'kopiert + Download ✓'));
+  snapBtn.addEventListener('click', () => {
+    const data = snapshot();
+    data.fiberScan = fiberScan(practiceRow() || boardAnchor(), 12, 400);
+    deliver(data, snapBtn, 'kopiert + Download ✓');
+  });
   const recBtn = mkBtn('Record 6s', '#b71c1c');
   recBtn.addEventListener('click', () => {
     recBtn.textContent = 'zeichnet auf … (jetzt ziehen!)';
     record(6, (trace) => deliver(trace, recBtn, 'kopiert + Download ✓'));
   });
+  // Für die Pool-Frage: lang genug, um eine Linie zu Ende zu spielen und weiterzuschalten.
+  const poolBtn = mkBtn('Record 30s (Pool)', '#4527a0');
+  poolBtn.title = 'Aufnahme mit Netzwerk-Mitschnitt und Zähler-Verlauf: eine Linie zu Ende '
+    + 'spielen und weiterschalten — danach zeigt der Dump, welcher Wert sich mitbewegt hat.';
+  poolBtn.addEventListener('click', () => {
+    poolBtn.textContent = 'zeichnet 30 s auf … (Linie fertig spielen!)';
+    record(30, (trace) => deliver(trace, poolBtn, 'kopiert + Download ✓'));
+  });
   panel.appendChild(snapBtn);
   panel.appendChild(recBtn);
+  panel.appendChild(poolBtn);
   document.body.appendChild(panel);
 })();
