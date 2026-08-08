@@ -105,19 +105,42 @@ Wiederkehrend (kein einmaliges TODO):
   Boni am Linienende) — sonst muss die Aufschlüsselung als „erfasste Einzelbeträge" beschriftet
   werden statt als Zerlegung der Summe. Erfasst wird das mit Inspector v0.2.0 (`xpAnzeigen`).
 
-- [ ] **Restliche Linien im Trainingspool anzeigen** — MESSUNG 08.08.: Quelle NICHT gefunden
-  Der Inspector fand am Brett-Ast weder einen `[role="progressbar"]` noch ein „x/y"-Muster in
-  `.row-practice` (nur die Brett-Koordinaten 8/7/6/5) und in den React-Props nur
-  `collapseMoveTrainerHeader`. Die Zahl steckt also nicht am Brett. Nächster Anlauf: Anker weiter
-  oben (Move-Trainer-Header, evtl. eingeklappt) oder Chessables Session-State weiter oben im
-  Fiber-Baum — dafür müsste der Inspector vom `.row-practice`-Container aus nach oben walken statt
-  vom Brett.
-  Irgendwo sichtbar machen, wieviele Linien im aktuellen Trainingspool noch offen sind.
-  Datenquelle klären: Chessables eigene Fortschrittsanzeige (DOM) oder der bereits vorhandene
-  Fortschritts-Abruf (`ensureProgress` → `getCourse?includeVariations=true` in
-  `chessable-activity.js`, liefert die Linien-Liste inkl. Status). Achtung: dieser Abruf läuft
-  seit v1.38.1 nur noch mit konfigurierter RookHub-Instanz — für eine reine Anzeige ohne RookHub
-  bräuchte es eine andere Quelle oder eine bewusste Ausnahme.
+- [ ] **Restliche Linien im Trainingspool anzeigen** — MESSUNG AUSGEWERTET, Inspector v0.3.1 gebaut
+  **Korrektur der alten Notiz:** hier stand, die Messung habe „nur die Brett-Koordinaten 8/7/6/5"
+  gefunden. Das war zu knapp und hat die nächste Runde in die falsche Richtung geschickt. In
+  `snapshotPfeile.json` steht sehr wohl eine Kennzahlenzeile — drei gleichartige Zellen
+  (`100%`, `1`, `180`, Klasse `sc-ckCjom ggKGUz`, gleiche Höhe, je 85,5 px breit) plus ein
+  klassenloser `99`er-SPAN.
+
+  **Was davon ausscheidet (belegt, nicht vermutet):**
+  - `180` ist Sitzungs-XP, kein Pool-Rest: `xpAnzeigen` geht von „78.503.115 points to" auf
+    „78.502.935 points to" — Differenz exakt 180, passend zu den erfassten „+20/+30/+60 XP".
+  - `99` ist über alle vier Dumps vom 08.08. (08:56 bis 09:01) KONSTANT, während sich die XP
+    änderten. Ein Rest-Zähler eines laufenden Pools würde in fünf Minuten Training sinken.
+  - Es gibt dokumentweit KEIN `[role="progressbar"]`, kein `x/y`-Muster und keinen Treffer auf
+    `remaining|left|due|queue|pool|verbleibend|offen` in irgendeinem der sieben Dumps.
+
+  **Der eigentliche Fundort — und warum ihn keine Messung erreichte:** der Move-Trainer-Drawer
+  `#mt-drawer` (in `.MuiDrawer-root.ui23-sidebar-drawer`, links, 360 px breit) ist ein
+  SCHWESTER-Zweig neben `.row-practice`. Wer vom Brett aus sucht — per `closest()` im DOM oder
+  per `fiber.return` im React-Baum — kommt dort prinzipiell nie an. Genau das taten alle
+  bisherigen Sammler. Im Drawer stecken `mt-drawer-content__chapter` und
+  `mt-drawer-content__variations__link` mit `oid`/`lid` sowie `#currentStudyingVariation`, also
+  die Linien-Identität. Im gemessenen Zustand war allerdings nur EINE Variante gerendert
+  (Höhen 60 + 52 = 112), der Drawer zeigte also die laufende Linie, nicht den Pool.
+
+  **Nächster Schritt (Inspector v0.3.1 kann das jetzt):** einen Dump mit AUFGEKLAPPTEM Drawer
+  ziehen, am besten über den neuen Knopf „Record 30s (Pool)" — der schneidet zusätzlich die
+  Chessable-API-Antworten mit und protokolliert den Zähler-Verlauf im Halbsekundentakt. Wenn
+  eine Linie fertig wird, zeigt die Differenz, welcher Wert sich mitbewegt. Neu erfasst werden
+  ausserdem `drawer` (vollständig, strukturiert nach Kapiteln/Linien), `zaehler` (dokumentweit
+  MIT Beschriftung statt nackter Zahlen), `fiberScan` an drei Ankern inkl. Hook-State,
+  Seiten-State und Speicher.
+
+  Falls die Zahl im DOM gar nicht steht: Rückfallweg bleibt Chessables eigener Fortschritts-Abruf
+  (`ensureProgress` → `getCourse?includeVariations=true` in `chessable-activity.js`) — der läuft
+  seit v1.38.1 aber nur mit konfigurierter RookHub-Instanz, für eine reine Anzeige bräuchte es
+  eine bewusste Ausnahme.
 
 ## Optional / Später
 

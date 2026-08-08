@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RepCheck Chessable-Inspector (Debug)
 // @namespace    https://github.com/kahalm/repcheck
-// @version      0.3.0
+// @version      0.3.1
 // @description  Diagnose-Werkzeug: sammelt Brett-DOM/Geometrie/Drag-Traces sowie Trainings-Zähler (DOM, React-State, Seiten-State, Netzwerk) auf chessable.com als JSON (Zwischenablage + Download). NICHT für die Stores — nur zur Fehleranalyse.
 // @match        https://www.chessable.com/*
 // @match        https://chessable.com/*
@@ -147,6 +147,7 @@
     data.progress = collectProgress(board);
     data.zaehler = collectZaehler();
     data.practiceHtml = collectPracticeHtml();
+    data.drawer = collectDrawer();
     data.seitenState = collectSeitenState();
     data.speicher = collectSpeicher();
     data.netzwerkBisher = collectResourceUrls();
@@ -283,6 +284,54 @@
     return out;
   }
 
+  /**
+   * Move-Trainer-Drawer (`#mt-drawer`). WICHTIGSTER Anker für die Pool-Frage — und der Grund,
+   * warum die bisherige Messung nichts fand: der Drawer hängt in `.MuiDrawer-root`, einem
+   * SCHWESTER-Zweig neben `.row-practice`. Wer vom Brett aus sucht, kommt dort nie hin.
+   *
+   * Belegt aus den Dumps vom 08.08.: darin stecken `mt-drawer-content__chapter` (Kapiteltitel,
+   * Klasse trägt `--active--is-review`) und `mt-drawer-content__variations__link` mit den
+   * Attributen `oid`/`lid` sowie `#currentStudyingVariation` — also die Linien-Identität. Im
+   * Review-Modus war nur EINE Variante gerendert (Höhen 60 + 52 = 112), der Pool stand also
+   * nicht offen. Deshalb hier ALLES ungekürzt und strukturiert, statt wie bisher als auf 600
+   * Zeichen beschnittenes Overlay-HTML.
+   */
+  function collectDrawer() {
+    const drawer = document.getElementById('mt-drawer')
+      || document.querySelector('[class*="mt-drawer"], [class*="sidebar-drawer"]');
+    if (!drawer) return { gefunden: false };
+    const kapitel = [...drawer.querySelectorAll('[class*="chapter"]')].slice(0, 60).map((el) => ({
+      class: String(el.className).slice(0, 200),
+      text: (el.textContent || '').trim().slice(0, 120),
+      rect: rectOf(el),
+      kinder: el.children.length,
+    }));
+    const linien = [...drawer.querySelectorAll('[class*="variations__link"], a[oid], [oid], [lid]')]
+      .slice(0, 300).map((el) => ({
+        class: String(el.className).slice(0, 200),
+        oid: el.getAttribute('oid'), lid: el.getAttribute('lid'),
+        text: (el.textContent || '').trim().slice(0, 100),
+        rect: rectOf(el),
+      }));
+    const html = zensiereText(drawer.outerHTML);
+    return {
+      gefunden: true,
+      id: drawer.id || null,
+      class: String(drawer.className).slice(0, 200),
+      rect: rectOf(drawer),
+      // Wie viele Einträge gerendert sind, ist selbst schon die halbe Antwort: listet der Drawer
+      // den ganzen Pool oder nur die laufende Linie?
+      anzahlKapitel: kapitel.length,
+      anzahlLinien: linien.length,
+      aktuelleVariante: (document.getElementById('currentStudyingVariation') || {}).textContent || null,
+      kapitel,
+      linien,
+      htmlLaenge: html.length,
+      html: html.slice(0, 90000),
+      ende: html.length > 90000 ? html.slice(-8000) : null,
+    };
+  }
+
   /** Struktur der Practice-Spalte OHNE das Brett (das ist separat und riesig). Ohne diesen
    *  Ausschnitt lassen sich die gefundenen Zahlen nicht einordnen. */
   function collectPracticeHtml() {
@@ -412,6 +461,22 @@
       }
     }
     return { gefunden: true, besuchteFibers: besucht, aufwaerts, abwaerts: abwaerts.slice(0, 80) };
+  }
+
+  /** Fiber an ALLEN drei Ankern abgrasen. Der Move-Trainer-Drawer haengt in einem
+   *  SCHWESTER-Zweig neben `.row-practice` — vom Brett aus ist er ueber `fiber.return`
+   *  unerreichbar. Genau daran ist die Messung vom 08.08. gescheitert. */
+  function alleFiberScans() {
+    const anker = [
+      ['drawer', document.getElementById('mt-drawer') || document.querySelector('[class*="mt-drawer"]')],
+      ['practiceRow', practiceRow()],
+      ['board', boardAnchor()],
+    ];
+    const out = {};
+    for (const [name, el] of anker) {
+      out[name] = el ? fiberScan(el, 12, 400) : { gefunden: false };
+    }
+    return out;
   }
 
   // ── Seiten-State und Speicher ──────────────────────────────────────────
@@ -634,7 +699,7 @@
       // Zum Vergleich: derselbe Zustand NACH der Aufnahme. Die Differenz der Zähler ist die
       // eigentliche Antwort auf „welcher Wert ist der Trainingspool".
       trace.snapshotAfter = { zaehler: collectZaehler(), progress: collectProgress(boardAnchor()) };
-      trace.fiberScan = fiberScan(practiceRow() || boardAnchor(), 12, 400);
+      trace.fiberScan = alleFiberScans();
       done(trace);
     }, seconds * 1000);
   }
@@ -674,7 +739,7 @@
   const snapBtn = mkBtn('RC-Debug: Snapshot', '#455a64');
   snapBtn.addEventListener('click', () => {
     const data = snapshot();
-    data.fiberScan = fiberScan(practiceRow() || boardAnchor(), 12, 400);
+    data.fiberScan = alleFiberScans();
     deliver(data, snapBtn, 'kopiert + Download ✓');
   });
   const recBtn = mkBtn('Record 6s', '#b71c1c');
