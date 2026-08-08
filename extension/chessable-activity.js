@@ -148,10 +148,19 @@
   }, true);
 
   // Gewertete Zuege: <span data-testid="moveNotification"> — jede neue Benachrichtigung ist EIN
-  // gewerteter Zug (richtig/falsch/overstudied). Frueher zaehlte nur der exakte Text "XP" und der
-  // Observer hing am (von React ersetzten) Notification-Knoten selbst → massiver Undercount
-  // (~1-2 Zuege/Minute statt real ~10). Jetzt: Observer am ELTERN-Knoten (uebersteht den
-  // Node-Austausch) + Zeitfenster-Dedupe (max. 1 Zug je 800 ms gegen gebuendelte Mutationen).
+  // gewerteter Zug (richtig/falsch/overstudied). Der Observer haengt am ELTERN-Knoten, weil React
+  // den Notification-Knoten selbst austauscht.
+  //
+  // WICHTIG (Messung 08.08., Inspector v0.6.1): `attributes` MUSS mitbeobachtet werden. Eine
+  // wortgleiche Wiederholung — eine Linie, in der mehrere Zuege dieselben „+150 XP" geben —
+  // aendert weder Text noch Knoten; das innerHTML ist byte-identisch. Chessable stoesst nur die
+  // Einblend-Animation per ATTRIBUT am Wurzelknoten neu an. Ohne `attributes: true` feuert der
+  // Observer dort gar nicht und der Zug faellt still unter den Tisch. Genau daran lag der
+  // gemeldete Undercount (4,4 statt real 10-15 Zuege je Linie).
+  //
+  // Das Zeitfenster steht deshalb auf 400 ms: gemessene echte Zuege lagen 1,8-2,6 s auseinander,
+  // alles darunter ist Animations-Flackern desselben Zuges. 800 ms verschluckte zusaetzlich
+  // schnell gespielte Zuege.
   let notifObserver = null, watchedNotifParent = null, lastMoveCountAt = 0;
   function watchMoveNotif() {
     const n = document.querySelector('[data-testid="moveNotification"]');
@@ -164,9 +173,9 @@
       const t = cur ? cur.textContent.trim() : '';
       if (!t) return;
       bump();
-      if (now() - lastMoveCountAt > 800) { movesTrained++; lastMoveCountAt = now(); }
+      if (now() - lastMoveCountAt > 400) { movesTrained++; lastMoveCountAt = now(); }
     });
-    notifObserver.observe(parent, { childList: true, characterData: true, subtree: true });
+    notifObserver.observe(parent, { childList: true, characterData: true, subtree: true, attributes: true });
   }
 
   // Brett-Mutationen (Figur bewegt) = harter Aktivitaetsnachweis.
@@ -376,6 +385,69 @@
     } catch (e) {}
   }
 
+  // ---------- Tagesstatistik (lokal) ----------
+  //
+  // Grundlage für die Hochrechnung hinter dem ⏳-Zähler: wie viele Linien heute schon
+  // wiederholt wurden und wie lange sie im Schnitt gedauert haben.
+  //
+  // Bewusst LOKAL und unabhängig von RookHub — die Zahl soll auch ohne konfigurierte Instanz
+  // stimmen. Verbucht wird genau dort, wo die Zähler endgültig verbraucht sind: beim Verwerfen
+  // (nicht verbunden) und beim erfolgreichen Senden. NICHT beim Fehlschlag — dort werden sie
+  // zurückgebucht und später erneut gesendet, ein Zählen an der Stelle zählte doppelt.
+  //
+  // Gehalten werden 14 Tage, damit sich „heute" gegen den eigenen Schnitt einordnen lässt und
+  // eine dünne Tagesbasis (die ersten paar Linien) nicht zu einer Fantasie-Hochrechnung führt.
+  const DAILY_KEY = 'rcDailyStats';
+  const DAILY_MAX_DAYS = 14;
+
+  /** Lokales Datum als YYYY-MM-DD — bewusst NICHT UTC: „heute" ist der Tag des Nutzers. */
+  function tagesSchluessel(d) {
+    const x = d || new Date();
+    const p = (n) => String(n).padStart(2, '0');
+    return `${x.getFullYear()}-${p(x.getMonth() + 1)}-${p(x.getDate())}`;
+  }
+
+  function dailyLesen() {
+    return new Promise((resolve) => {
+      try {
+        chrome.storage.local.get([DAILY_KEY], (r) => {
+          const roh = (r && r[DAILY_KEY]) || {};
+          resolve(Array.isArray(roh.days) ? roh.days : []);
+        });
+      } catch (e) { resolve([]); }
+    });
+  }
+
+  async function dailyBuchen(secs, moves, lines) {
+    if (!secs && !moves && !lines) return;
+    const tag = tagesSchluessel();
+    const days = await dailyLesen();
+    let heute = days.find((d) => d.d === tag);
+    if (!heute) { heute = { d: tag, s: 0, m: 0, l: 0 }; days.push(heute); }
+    heute.s += secs || 0;
+    heute.m += moves || 0;
+    heute.l += lines || 0;
+    days.sort((a, b) => (a.d < b.d ? 1 : -1));          // neueste zuerst
+    try { chrome.storage.local.set({ [DAILY_KEY]: { days: days.slice(0, DAILY_MAX_DAYS) } }); } catch (e) { /* egal */ }
+  }
+
+  /** Zusammenfassung für die Anzeige: heute + Schnitt der VORTAGE (heute nicht mitrechnen,
+   *  sonst vergleicht sich der Tag mit sich selbst). */
+  async function dailyZusammenfassung() {
+    const days = await dailyLesen();
+    const tag = tagesSchluessel();
+    const heute = days.find((d) => d.d === tag) || { d: tag, s: 0, m: 0, l: 0 };
+    const vortage = days.filter((d) => d.d !== tag && d.l > 0);
+    const summe = vortage.reduce((a, d) => ({ s: a.s + d.s, l: a.l + d.l }), { s: 0, l: 0 });
+    return {
+      heute: { sekunden: heute.s, zuege: heute.m, linien: heute.l },
+      schnitt: {
+        tage: vortage.length,
+        sekProLinie: summe.l ? Math.round(summe.s / summe.l) : null,
+      },
+    };
+  }
+
   async function flush(force) {
     if (!force && activeMs < MIN_FLUSH_MS) return;
     const secs = Math.min(MAX_FLUSH_S, Math.round(activeMs / 1000));
@@ -385,6 +457,8 @@
     lastFlush = now();
     if (!cfg || !cfg.url || !cfg.token) {
       // Nicht mit RookHub verbunden → akkumulierte Zeit verwerfen (kein unbegrenztes Wachsen).
+      // Die lokale Tagesstatistik bekommt sie trotzdem: sie hängt nicht an RookHub.
+      dailyBuchen(secs, movesTrained, linesTrained);
       activeMs = 0; movesTrained = 0; linesTrained = 0;
       return;
     }
@@ -408,9 +482,12 @@
       }, (resp) => {
         if (chrome.runtime.lastError || !resp || !resp.ok) {
           // Fehlgeschlagen → Zeit/Zuege/Linien zurueckbuchen, damit nichts verloren geht.
+          // NICHT in die Tagesstatistik: der naechste Versuch schickt dieselben Werte erneut.
           activeMs += secs * 1000;
           movesTrained += moves;
           linesTrained += lines;
+        } else {
+          dailyBuchen(secs, moves, lines);
         }
       });
     } catch (e) {
@@ -508,7 +585,15 @@
     } catch (e) {}
   }
   window.addEventListener('message', (e) => {
-    if (e.source !== window || e.origin !== location.origin || !e.data || e.data.__repcheck !== 'request-chessable-buttons') return;
+    if (e.source !== window || e.origin !== location.origin || !e.data) return;
+    // Tagesstatistik für die Hochrechnung hinter dem ⏳-Zähler (MAIN-World hat kein chrome.*).
+    if (e.data.__repcheck === 'request-daily') {
+      dailyZusammenfassung().then((d) => {
+        window.postMessage({ __repcheck: 'daily', daily: d }, location.origin);
+      });
+      return;
+    }
+    if (e.data.__repcheck !== 'request-chessable-buttons') return;
     broadcastChessableButtons();
   });
   try {

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RepCheck — Opening Repertoire Deviation Checker
 // @namespace    https://github.com/kahalm/repcheck
-// @version      1.44.1
+// @version      1.45.0
 // @require      https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js
 // @description  Shows where your game deviates from your opening repertoire (chess.com + lichess, PGN files or RookHub). On chessable.com: copy/search FEN, remember a line to RookHub, show earned XP, report active training time to RookHub, read the API token.
 // @author       kahalm
@@ -2900,9 +2900,12 @@
         const t = cur ? cur.textContent.trim() : '';
         if (!t) return;
         bump();
-        if (now() - lastMoveCountAt > 800) { movesTrained++; lastMoveCountAt = now(); }
+        if (now() - lastMoveCountAt > 400) { movesTrained++; lastMoveCountAt = now(); }
       });
-      notifObserver.observe(parent, { childList: true, characterData: true, subtree: true });
+      // `attributes` MUSS mit: eine wortgleiche Wiederholung („+150 XP" mehrfach) aendert weder
+      // Text noch Knoten, sondern nur ein Attribut — ohne das feuert der Observer nicht und der
+      // Zug wird nie gezaehlt (Messung 08.08.; Ursache des Undercounts 4,4 statt 10-15 je Linie).
+      notifObserver.observe(parent, { childList: true, characterData: true, subtree: true, attributes: true });
     }
 
     let boardObserver = null, watchedBoard = null;
@@ -3038,6 +3041,29 @@
       }).catch(() => {});
     }
 
+    // ---------- Tagesstatistik (lokal) ----------
+    // Grundlage fuer die Hochrechnung hinter dem ⏳-Zaehler. Bewusst LOKAL und unabhaengig von
+    // RookHub. Verbucht wird genau dort, wo die Zaehler endgueltig verbraucht sind: beim
+    // Verwerfen (nicht verbunden) und beim erfolgreichen Senden — NICHT beim Fehlschlag, dort
+    // werden sie zurueckgebucht und spaeter erneut gesendet (das zaehlte doppelt).
+    function rcTagesSchluessel() {
+      const x = new Date(); const p2 = (n) => String(n).padStart(2, '0');
+      return `${x.getFullYear()}-${p2(x.getMonth() + 1)}-${p2(x.getDate())}`;
+    }
+    function rcDailyBuchen(secs, moves, lines) {
+      if (!secs && !moves && !lines) return;
+      try {
+        const roh = (typeof GM_getValue === 'function' && GM_getValue('rcDailyStats')) || {};
+        const days = Array.isArray(roh.days) ? roh.days : [];
+        const tag = rcTagesSchluessel();
+        let h = days.find((d) => d.d === tag);
+        if (!h) { h = { d: tag, s: 0, m: 0, l: 0 }; days.push(h); }
+        h.s += secs || 0; h.m += moves || 0; h.l += lines || 0;
+        days.sort((a, b) => (a.d < b.d ? 1 : -1));
+        if (typeof GM_setValue === 'function') GM_setValue('rcDailyStats', { days: days.slice(0, 14) });
+      } catch (e) { /* Speicher nicht verfuegbar */ }
+    }
+
     function flush(force) {
       if (!force && activeMs < MIN_FLUSH_MS) return;
       const secs = Math.min(MAX_FLUSH_S, Math.round(activeMs / 1000));
@@ -3045,7 +3071,10 @@
 
       const cfg = readConfig();
       lastFlush = now();
-      if (!cfg || !cfg.url || !cfg.token) { activeMs = 0; movesTrained = 0; linesTrained = 0; return; }
+      if (!cfg || !cfg.url || !cfg.token) {
+        rcDailyBuchen(secs, movesTrained, linesTrained);   // lokale Statistik haengt nicht an RookHub
+        activeMs = 0; movesTrained = 0; linesTrained = 0; return;
+      }
 
       const moves = movesTrained;
       const lines = linesTrained;
@@ -3063,6 +3092,7 @@
         body: JSON.stringify({ secondsActive: secs, movesTrained: moves, linesTrained: lines, courseKind, courseId: currentCourseId(), courseName: bestCourseName() }),
       }).then((resp) => {
         if (!resp.ok) { activeMs += secs * 1000; movesTrained += moves; linesTrained += lines; }
+        else rcDailyBuchen(secs, moves, lines);
       }).catch(() => { activeMs += secs * 1000; movesTrained += moves; linesTrained += lines; });
     }
 
@@ -3901,10 +3931,112 @@
       const el = document.getElementById(POOL_ID);
       if (!el) return;
       const rest = trainingPoolRest();
-      if (rest == null) { el.style.display = 'none'; return; }
+      if (rest == null) { el.style.display = 'none'; hidePoolPanel(); return; }
       el.textContent = '\u23F3 ' + rest;
-      el.title = 'Noch offen im aktuellen Trainingspool (aus Chessables Tab-Zaehler)';
+      el.title = 'Noch offen im aktuellen Trainingspool — klicken fuer Tagesbilanz und Hochrechnung';
       el.style.display = 'inline-flex';
+    }
+
+    // ---------- Klick auf den Pool-Zaehler: Tagesbilanz + Hochrechnung ----------
+    // Im Userscript liegt die Tagesstatistik direkt im GM-Storage — keine Bruecke noetig.
+    // Grundsatz: lieber ehrlich unscharf als scheingenau. Nach drei Linien ist ein Tagesschnitt
+    // Rauschen; dann wird der Schnitt der Vortage genommen und das auch dazugeschrieben.
+    const POOL_PANEL_ID = 'repcheck-chessable-pool-panel';
+    const POOL_MIN_LINIEN = 5;
+
+    function poolTagesdaten() {
+      let days = [];
+      try {
+        const roh = (typeof GM_getValue === 'function' && GM_getValue('rcDailyStats')) || {};
+        days = Array.isArray(roh.days) ? roh.days : [];
+      } catch (e) { /* egal */ }
+      const x = new Date(); const p2 = (n) => String(n).padStart(2, '0');
+      const tag = `${x.getFullYear()}-${p2(x.getMonth() + 1)}-${p2(x.getDate())}`;
+      const h = days.find((d) => d.d === tag) || { s: 0, m: 0, l: 0 };
+      const vortage = days.filter((d) => d.d !== tag && d.l > 0);
+      const sum = vortage.reduce((a, d) => ({ s: a.s + d.s, l: a.l + d.l }), { s: 0, l: 0 });
+      return {
+        heute: { sekunden: h.s, zuege: h.m, linien: h.l },
+        schnitt: { tage: vortage.length, sekProLinie: sum.l ? Math.round(sum.s / sum.l) : null },
+      };
+    }
+
+    function poolDauer(sek) {
+      const m = Math.round(sek / 60);
+      if (m < 60) return m + ' min';
+      return Math.floor(m / 60) + ':' + String(m % 60).padStart(2, '0') + ' h';
+    }
+    function poolUhrzeit(inSek) {
+      const d = new Date(Date.now() + inSek * 1000);
+      return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+    }
+    function poolZeile(label, wert) {
+      return '<div style="display:flex;gap:14px;justify-content:space-between"><span>' + label
+        + '</span><span style="font-variant-numeric:tabular-nums">' + wert + '</span></div>';
+    }
+
+    function renderPoolPanel() {
+      let el = document.getElementById(POOL_PANEL_ID);
+      if (!el) {
+        el = document.createElement('div');
+        el.id = POOL_PANEL_ID;
+        Object.assign(el.style, {
+          position: 'fixed', bottom: '58px', right: '16px', zIndex: '2147483647',
+          minWidth: '250px', maxWidth: '320px', background: 'rgba(0,0,0,0.88)', color: '#fff',
+          borderRadius: '8px', padding: '10px 12px', font: '12px/1.55 system-ui, sans-serif',
+          boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
+        });
+        document.body.appendChild(el);
+      }
+      const rest = trainingPoolRest();
+      const d = poolTagesdaten();
+      const h = d.heute, sch = d.schnitt;
+      const z = ['<div style="opacity:.7;margin-bottom:5px">Trainingspool</div>'];
+      z.push(poolZeile('Noch offen', rest == null ? '—' : rest + ' Linien'));
+      z.push(poolZeile('Heute geschafft', h.linien + ' Linien'));
+      const heuteSchnitt = h.linien > 0 ? Math.round(h.sekunden / h.linien) : null;
+      if (heuteSchnitt != null) {
+        const proZug = h.zuege > 0 ? ' · ' + (h.sekunden / h.zuege).toFixed(0) + ' s/Zug' : '';
+        z.push(poolZeile('Ø je Linie heute', heuteSchnitt + ' s' + proZug));
+      }
+      if (h.sekunden > 0) z.push(poolZeile('Aktive Zeit heute', poolDauer(h.sekunden)));
+
+      let basis = null, basisText = '';
+      if (heuteSchnitt != null && h.linien >= POOL_MIN_LINIEN) { basis = heuteSchnitt; basisText = 'Tagesschnitt'; }
+      else if (sch.sekProLinie) {
+        basis = sch.sekProLinie;
+        basisText = 'Schnitt der letzten ' + sch.tage + (sch.tage === 1 ? ' Tag' : ' Tage');
+      }
+      z.push('<div style="border-top:1px solid rgba(255,255,255,.22);margin:7px 0 5px"></div>');
+      if (rest == null) z.push('<div style="opacity:.75">Kein Pool-Zaehler auf der Seite gefunden.</div>');
+      else if (rest === 0) z.push('<div>Pool leer — fuer heute durch. ✓</div>');
+      else if (basis == null) z.push('<div style="opacity:.75">Fuer eine Hochrechnung fehlen noch Daten — nach ein paar Linien steht hier eine Schaetzung.</div>');
+      else {
+        const restSek = rest * basis;
+        z.push(poolZeile('Rest ≈', poolDauer(restSek) + ' → ' + poolUhrzeit(restSek)));
+        z.push('<div style="opacity:.6;margin-top:3px;font-size:11px">gerechnet mit ' + basis + ' s je Linie ('
+          + basisText + ')' + (heuteSchnitt != null && h.linien < POOL_MIN_LINIEN
+            ? ' — heute erst ' + h.linien + (h.linien === 1 ? ' Linie' : ' Linien') + ', dafuer zu wenig' : '') + '</div>');
+        if (heuteSchnitt != null && sch.sekProLinie && h.linien >= POOL_MIN_LINIEN) {
+          const diff = Math.round(((heuteSchnitt / sch.sekProLinie) - 1) * 100);
+          if (Math.abs(diff) >= 8) {
+            z.push('<div style="opacity:.6;font-size:11px">heute ' + Math.abs(diff) + ' % '
+              + (diff > 0 ? 'langsamer' : 'schneller') + ' als sonst (' + sch.sekProLinie + ' s)</div>');
+          }
+        }
+      }
+      el.innerHTML = z.join('');
+      el.style.display = 'block';
+    }
+
+    function togglePoolPanel() {
+      const el = document.getElementById(POOL_PANEL_ID);
+      if (el && el.style.display === 'block') { el.style.display = 'none'; return; }
+      renderPoolPanel();
+    }
+    function hidePoolPanel() {
+      const el = document.getElementById(POOL_PANEL_ID);
+      if (el) el.style.display = 'none';
     }
 
     function createUi() {
@@ -3919,12 +4051,14 @@
 
       // Rest-Zaehler des Trainingspools. Im Zen-Modus ist Chessables Tab-Leiste verdeckt —
       // deshalb spiegeln wir die Zahl hierher.
-      const poolBadge = document.createElement('span');
+      const poolBadge = document.createElement('button');
+      poolBadge.type = 'button';
       poolBadge.id = POOL_ID;
+      poolBadge.addEventListener('click', togglePoolPanel);
       Object.assign(poolBadge.style, {
         display: 'none', alignItems: 'center', padding: '6px 9px', borderRadius: '6px',
         background: 'rgba(0,0,0,0.45)', color: '#fff', font: '12px/1 system-ui, sans-serif',
-        whiteSpace: 'nowrap', alignSelf: 'center',
+        whiteSpace: 'nowrap', alignSelf: 'center', border: 'none', cursor: 'pointer',
       });
       wrap.appendChild(poolBadge);
 
@@ -4086,6 +4220,7 @@
     function removeUi() {
       document.getElementById(CONTAINER_ID)?.remove();
       if (poolTimer) { clearInterval(poolTimer); poolTimer = null; }
+      document.getElementById(POOL_PANEL_ID)?.remove();
       feedbackObserver?.disconnect();
       feedbackObserver = null;
       watchedFeedbackRoot = null;
