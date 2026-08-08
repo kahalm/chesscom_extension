@@ -1,0 +1,675 @@
+// Geteilte Übersetzungen für die RepCheck-Oberflächen (Popup + In-Page-Einstellungs-Panel).
+//
+// Logik NUR hier ändern, dann `npm run build:userscript` — der Build kopiert den Kern zwischen
+// die Sentinel-Marker in repcheck.user.js. NICHT die generierte Region im Userscript von Hand
+// editieren.
+//
+// Aufbau:
+//   RC_MESSAGES[lang][key] = 'Text mit {platzhalter}'
+//                          | { one: '…', few: '…', other: '…' }   ← Plural über {count}
+//   `en` ist die Rückfallsprache: fehlt ein Schlüssel in de/hr, greift en; fehlt er auch dort,
+//   liefert t() den Schlüssel selbst zurück (sichtbar kaputt statt leer — das findet man beim
+//   Testen sofort).
+//
+// Warum ein eigenes Modul statt `chrome.i18n`/`_locales`: chrome.i18n folgt der BROWSER-Sprache
+// und lässt sich vom Nutzer nicht umstellen; RookHub hat aber eine eigene Sprachwahl, und die
+// soll hier genauso funktionieren. Dazu kommt: `chrome.i18n` steht weder im MAIN-World-Script
+// (chessable-fen.js) noch im Tampermonkey-Userscript zur Verfügung — beide Distributionen
+// brauchen dieselbe Tabelle. Die Store-Metadaten (Name/Beschreibung) bleiben davon unberührt.
+
+const RC_LANGS = ['en', 'de', 'hr'];
+const RC_FALLBACK = 'en';
+
+const RC_MESSAGES = {
+  en: {
+    // — Sprachwahl —
+    'lang.label': 'Language',
+    'lang.auto': 'Automatic ({lang})',
+
+    // — Popup: Kopf und Grundgerüst —
+    'popup.share.heading': 'Link to the current line',
+    'popup.share.copy': 'Copy',
+    'popup.share.loading': 'loading…',
+    'popup.share.noMoves': 'No move sequence on this page.',
+    'popup.share.ready': {
+      one: '{count} ply · click “Copy”',
+      other: '{count} plies · click “Copy”',
+    },
+    'popup.share.failed': 'Could not create link: {error}',
+    'popup.copied': 'copied ✓',
+    'popup.copyFailed': 'copy failed',
+    'popup.status.loading': 'Loading status…',
+    'popup.check': 'Check',
+    'popup.settings': 'Settings',
+
+    // — Popup: Repertoire-Status —
+    'popup.rep.heading': {
+      one: 'Repertoire ({count})',
+      other: 'Repertoires ({count})',
+    },
+    'popup.rep.unnamed': '(unnamed)',
+    'popup.rep.files': {
+      one: '{count} PGN',
+      other: '{count} PGNs',
+    },
+    'popup.rookhub.loading': 'RookHub: loading repertoires…',
+    'popup.rookhub.connected': {
+      one: 'RookHub connected · {count} repertoire',
+      other: 'RookHub connected · {count} repertoires',
+    },
+    'popup.rookhub.noOpenings': 'RookHub connected · no opening repertoires',
+    'popup.rookhub.error': 'RookHub: {error}',
+    'popup.local.loaded': {
+      one: 'Local: {count} opening loaded ({min} min ago)',
+      other: 'Local: {count} openings loaded ({min} min ago)',
+    },
+    'popup.none': 'No repertoire loaded yet',
+
+    // — Popup: Chessable-Token —
+    'popup.chessable.heading': 'Chessable token',
+    'popup.chessable.copy': 'Copy token',
+    'popup.chessable.justCaptured': 'just captured',
+    'popup.chessable.capturedAgo': 'captured {min} min ago',
+
+    // — Popup: Chessable-Button-Einstellungen —
+    'popup.buttons.heading': 'Chessable buttons',
+    'popup.buttons.intro': 'Choose which buttons appear in the bottom right on chessable.com (practice mode).',
+    'popup.buttons.fullscreen': 'Fullscreen',
+
+    // — Popup: Fußzeile —
+    'popup.open.chesscom': 'chess.com',
+    'popup.open.lichess': 'lichess.org',
+    'popup.needTab': 'Please open chess.com or lichess.org in the active tab first.',
+    'popup.error': 'Error: {error}',
+
+    // — Kurs-Import über den Browser —
+    'import.heading': 'RookHub import (browser)',
+    'import.target.repertoire': 'Repertoire',
+    'import.target.book': 'Course/book',
+    'import.crawl': '⚡ Fetch course via my browser',
+    'import.cancel': 'Cancel',
+    'import.captured': {
+      one: 'Import recorded lines ({count} line)',
+      other: 'Import recorded lines ({count} lines)',
+    },
+    'import.capturedPlain': 'Import recorded lines',
+    'import.live': 'Append lines live as you click through the course',
+    'import.notReady': 'Content script not ready — reload the page.',
+    'import.course': 'Course: {name}',
+    'import.courseId': 'Course ID {id}',
+    'import.openCourse': 'Open a Chessable course.',
+    'import.onRookhub': 'On RookHub: {done}/{total} lines ({pct}%)',
+    'import.starting': 'Starting…',
+    'import.importing': 'Importing…',
+    'import.warn.title': 'Ban risk',
+    'import.warn.body': '“Fetch course via my browser” makes rapid, automated calls to the Chessable API. This may violate Chessable’s terms of use and in the worst case get your account suspended.',
+    'import.warn.own': 'Use it only for your own courses and at your own risk.',
+    'import.warn.confirm': 'Continue anyway?',
+    'import.throttled': 'Chessable is throttling (HTTP {status}) — waiting {seconds} s (attempt {attempt}/{max})…',
+    'import.fetchingStructure': 'Fetching course structure…',
+    'import.aborted': 'Cancelled.',
+    'import.abortRequested': 'Cancelling…',
+    'import.nothingNew': {
+      one: 'Nothing new — the {count} line is already on RookHub.',
+      other: 'Nothing new — all {count} lines are already on RookHub.',
+    },
+    'import.fetchingLines': 'Fetching new lines… {done}/{total}',
+    'import.appending': 'Appending new lines…',
+    'import.doneAppended': {
+      one: 'Done: {count} new line appended.',
+      other: 'Done: {count} new lines appended.',
+    },
+    'import.doneAppendedSkipped': {
+      one: 'Done: {count} new line appended ({skipped} already present).',
+      other: 'Done: {count} new lines appended ({skipped} already present).',
+    },
+    'import.doneImportedPuzzles': {
+      one: 'Done: {count} puzzle imported.',
+      other: 'Done: {count} puzzles imported.',
+    },
+    'import.doneImportedLines': {
+      one: 'Done: {count} line imported.',
+      other: 'Done: {count} lines imported.',
+    },
+    'import.nothingCaptured': 'Nothing recorded.',
+    'import.importingCapture': 'Importing recorded lines…',
+    'import.liveAppended': {
+      one: 'Live: {count} line appended ({sent} sent).',
+      other: 'Live: {count} lines appended ({sent} sent).',
+    },
+    'import.liveError': 'Live error: {error}',
+    'import.error': 'Error: {error}',
+
+    // — In-Page-Einstellungs-Panel —
+    'panel.heading': 'Repertoire settings',
+    'panel.rookhub': 'RookHub:',
+    'panel.connect': 'Connect',
+    'panel.refresh': 'Refresh',
+    'panel.noAccount': 'No account yet? ',
+    'panel.register': 'Register at {host}',
+    'panel.tokenHint': ' · then create a token under Profile → “Extension tokens”.',
+    'panel.folder': 'Load from folder:',
+    'panel.selectFolder': 'Select PGN folder',
+    'panel.folderLoaded': '(loaded)',
+    'panel.noFolder': '(no folder selected)',
+    'panel.paste': 'Or paste PGN:',
+    'panel.pastePlaceholder': 'Paste your repertoire PGN here…',
+    'panel.loadPgn': 'Load PGN',
+    'panel.close': 'Close',
+    'panel.loaded': 'Repertoire loaded',
+    'panel.notLoaded': 'No repertoire loaded',
+    'panel.loadedFiles': {
+      one: 'Repertoire loaded: {count} file',
+      other: 'Repertoire loaded: {count} files',
+    },
+    'panel.loadedText': 'Repertoire loaded from text',
+    'panel.noPgnFiles': 'No .pgn files found in the folder',
+
+    // — Verbindungsstatus (Popup UND Panel) —
+    'status.needUrlToken': 'RookHub: URL and token required.',
+    'status.connecting': 'RookHub: connecting…',
+    'status.refreshing': 'RookHub: refreshing…',
+    'status.notConfigured': 'RookHub: not configured yet.',
+    'status.connectedNoOpenings': 'RookHub: connected, but no opening repertoires found.',
+    'status.connectedFiles': {
+      one: 'RookHub: connected ({count} file).',
+      other: 'RookHub: connected ({count} files).',
+    },
+
+    // — Prüf-Ergebnis —
+    'check.outOfRep': 'Out of repertoire at move {move} ({color}: {san})',
+    'check.transpositions': {
+      one: '{count} transposition',
+      other: '{count} transpositions',
+    },
+    'check.inRep': 'In repertoire ✓',
+    'check.inRepWithGaps': 'In repertoire ✓ ({gaps})',
+    'check.fullyInRep': 'Game fully within repertoire ✓',
+    'check.noMoves': 'No moves found',
+    'check.noRepertoire': 'No repertoire loaded — click ⚙ to set one up',
+    'check.white': 'White',
+    'check.black': 'Black',
+
+    // — Schwebende Knöpfe auf chess.com/lichess —
+    'tools.check': 'Check the current game against the repertoire',
+    'tools.searchFen': 'Search Chessable for the FEN before the deviation',
+    'tools.copyPgn': 'Copy game PGN',
+    'tools.saveGame': 'Save game to RookHub',
+    'tools.saved': 'Game saved',
+    'tools.savedWithLink': 'Saved · share link copied',
+
+    // — Fehlertexte —
+    'err.noBackground': 'no response from the background worker',
+    'err.tokenInvalid': 'Token invalid or expired.',
+    'err.http': 'HTTP {status}',
+    'err.rookhubHttp': 'RookHub HTTP {status}',
+    'err.urlTokenMissing': 'RookHub: URL or token missing.',
+    'err.noToken': 'no token in the response',
+    'err.notConnected': 'Not connected to RookHub',
+    'err.noChessableToken': 'No Chessable token (are you logged in to chessable.com?)',
+    'err.chessableTokenNoUid': 'Chessable token without uid',
+    'err.chessableHttp': 'Chessable HTTP {status}',
+    'err.noCourse': 'No course detected',
+    'err.libMissing': 'internal lib missing',
+    'err.noChapters': 'No chapters found',
+    'err.noLines': 'No lines fetched',
+
+    // — Tampermonkey-Menü (nur Userscript) —
+    'menu.check': '♟ Check',
+    'menu.settings': '⚙ Settings',
+    'menu.copyChessableToken': '🔑 Copy Chessable token',
+    'menu.noChessableToken': 'RepCheck: no Chessable token found in localStorage — logged in?',
+    'menu.chessableTokenCopied': 'RepCheck: Chessable token copied to clipboard.',
+  },
+
+  de: {
+    'lang.label': 'Sprache',
+    'lang.auto': 'Automatisch ({lang})',
+
+    'popup.share.heading': 'Link zur aktuellen Line',
+    'popup.share.copy': 'Kopieren',
+    'popup.share.loading': 'lade…',
+    'popup.share.noMoves': 'Keine Zugfolge auf dieser Seite.',
+    'popup.share.ready': {
+      one: '{count} Halbzug · klick „Kopieren“',
+      other: '{count} Halbzüge · klick „Kopieren“',
+    },
+    'popup.share.failed': 'Link fehlgeschlagen: {error}',
+    'popup.copied': 'kopiert ✓',
+    'popup.copyFailed': 'Kopieren fehlgeschlagen',
+    'popup.status.loading': 'Lade Status…',
+    'popup.check': 'Prüfen',
+    'popup.settings': 'Einstellungen',
+
+    'popup.rep.heading': {
+      one: 'Repertoire ({count})',
+      other: 'Repertoires ({count})',
+    },
+    'popup.rep.unnamed': '(unbenannt)',
+    'popup.rep.files': {
+      one: '{count} PGN',
+      other: '{count} PGNs',
+    },
+    'popup.rookhub.loading': 'RookHub: lade Repertoires…',
+    'popup.rookhub.connected': {
+      one: 'RookHub verbunden · {count} Repertoire',
+      other: 'RookHub verbunden · {count} Repertoires',
+    },
+    'popup.rookhub.noOpenings': 'RookHub verbunden · keine Opening-Repertoires',
+    'popup.rookhub.error': 'RookHub: {error}',
+    'popup.local.loaded': {
+      one: 'Lokal: {count} Eröffnung geladen (vor {min} min)',
+      other: 'Lokal: {count} Eröffnungen geladen (vor {min} min)',
+    },
+    'popup.none': 'Noch kein Repertoire geladen',
+
+    'popup.chessable.heading': 'Chessable-Token',
+    'popup.chessable.copy': 'Token kopieren',
+    'popup.chessable.justCaptured': 'gerade erfasst',
+    'popup.chessable.capturedAgo': 'vor {min} min erfasst',
+
+    'popup.buttons.heading': 'Chessable-Buttons',
+    'popup.buttons.intro': 'Welche Buttons unten rechts auf chessable.com (Practice-Modus) erscheinen.',
+    'popup.buttons.fullscreen': 'Vollbild',
+
+    'popup.open.chesscom': 'chess.com',
+    'popup.open.lichess': 'lichess.org',
+    'popup.needTab': 'Bitte zuerst chess.com oder lichess.org im aktiven Tab öffnen.',
+    'popup.error': 'Fehler: {error}',
+
+    'import.heading': 'RookHub-Import (Browser)',
+    'import.target.repertoire': 'Repertoire',
+    'import.target.book': 'Kurs/Buch',
+    'import.crawl': '⚡ Kurs über meinen Browser holen',
+    'import.cancel': 'Abbrechen',
+    'import.captured': {
+      one: 'Mitschnitt importieren ({count} Linie)',
+      other: 'Mitschnitt importieren ({count} Linien)',
+    },
+    'import.capturedPlain': 'Mitschnitt importieren',
+    'import.live': 'Linien beim Durchklicken live anhängen',
+    'import.notReady': 'Content-Script nicht bereit — Seite neu laden.',
+    'import.course': 'Kurs: {name}',
+    'import.courseId': 'Kurs-ID {id}',
+    'import.openCourse': 'Öffne einen Chessable-Kurs.',
+    'import.onRookhub': 'Auf RookHub: {done}/{total} Linien ({pct}%)',
+    'import.starting': 'Starte …',
+    'import.importing': 'Importiere …',
+    'import.warn.title': 'Bannrisiko',
+    'import.warn.body': '„Kurs über meinen Browser holen“ ruft die Chessable-API automatisiert im Schnelldurchlauf ab. Das kann gegen Chessables Nutzungsbedingungen verstoßen und im schlimmsten Fall zur Sperrung deines Kontos führen.',
+    'import.warn.own': 'Nutze es nur für eigene Kurse und auf eigenes Risiko.',
+    'import.warn.confirm': 'Wirklich fortfahren?',
+    'import.throttled': 'Chessable drosselt (HTTP {status}) — warte {seconds} s (Versuch {attempt}/{max}) …',
+    'import.fetchingStructure': 'Hole Kursstruktur …',
+    'import.aborted': 'Abgebrochen.',
+    'import.abortRequested': 'Abbruch angefordert …',
+    'import.nothingNew': {
+      one: 'Nichts Neues — {count} Linie ist schon auf RookHub.',
+      other: 'Nichts Neues — alle {count} Linien sind schon auf RookHub.',
+    },
+    'import.fetchingLines': 'Hole neue Linien … {done}/{total}',
+    'import.appending': 'Hänge neue Linien an …',
+    'import.doneAppended': {
+      one: 'Fertig: {count} neue Linie angehängt.',
+      other: 'Fertig: {count} neue Linien angehängt.',
+    },
+    'import.doneAppendedSkipped': {
+      one: 'Fertig: {count} neue Linie angehängt ({skipped} schon vorhanden).',
+      other: 'Fertig: {count} neue Linien angehängt ({skipped} schon vorhanden).',
+    },
+    'import.doneImportedPuzzles': {
+      one: 'Fertig: {count} Puzzle importiert.',
+      other: 'Fertig: {count} Puzzles importiert.',
+    },
+    'import.doneImportedLines': {
+      one: 'Fertig: {count} Linie importiert.',
+      other: 'Fertig: {count} Linien importiert.',
+    },
+    'import.nothingCaptured': 'Nichts mitgeschnitten.',
+    'import.importingCapture': 'Importiere Mitschnitt …',
+    'import.liveAppended': {
+      one: 'Live: {count} Linie angehängt ({sent} gesendet).',
+      other: 'Live: {count} Linien angehängt ({sent} gesendet).',
+    },
+    'import.liveError': 'Live-Fehler: {error}',
+    'import.error': 'Fehler: {error}',
+
+    'panel.heading': 'Repertoire-Einstellungen',
+    'panel.rookhub': 'RookHub:',
+    'panel.connect': 'Verbinden',
+    'panel.refresh': 'Aktualisieren',
+    'panel.noAccount': 'Noch kein Konto? ',
+    'panel.register': 'Auf {host} registrieren',
+    'panel.tokenHint': ' · Token dann unter Profil → „Extension-Tokens“ erstellen.',
+    'panel.folder': 'Aus Ordner laden:',
+    'panel.selectFolder': 'PGN-Ordner wählen',
+    'panel.folderLoaded': '(geladen)',
+    'panel.noFolder': '(kein Ordner gewählt)',
+    'panel.paste': 'Oder PGN einfügen:',
+    'panel.pastePlaceholder': 'Repertoire-PGN hier einfügen…',
+    'panel.loadPgn': 'PGN laden',
+    'panel.close': 'Schließen',
+    'panel.loaded': 'Repertoire geladen',
+    'panel.notLoaded': 'Kein Repertoire geladen',
+    'panel.loadedFiles': {
+      one: 'Repertoire geladen: {count} Datei',
+      other: 'Repertoire geladen: {count} Dateien',
+    },
+    'panel.loadedText': 'Repertoire aus Text geladen',
+    'panel.noPgnFiles': 'Keine .pgn-Dateien im Ordner gefunden',
+
+    'status.needUrlToken': 'RookHub: URL und Token erforderlich.',
+    'status.connecting': 'RookHub: verbinde…',
+    'status.refreshing': 'RookHub: aktualisiere…',
+    'status.notConfigured': 'RookHub: noch nicht konfiguriert.',
+    'status.connectedNoOpenings': 'RookHub: verbunden, aber keine Opening-Repertoires gefunden.',
+    'status.connectedFiles': {
+      one: 'RookHub: verbunden ({count} Datei).',
+      other: 'RookHub: verbunden ({count} Dateien).',
+    },
+
+    'check.outOfRep': 'Aus dem Repertoire bei Zug {move} ({color}: {san})',
+    'check.transpositions': {
+      one: '{count} Zugumstellung',
+      other: '{count} Zugumstellungen',
+    },
+    'check.inRep': 'Im Repertoire ✓',
+    'check.inRepWithGaps': 'Im Repertoire ✓ ({gaps})',
+    'check.fullyInRep': 'Partie vollständig im Repertoire ✓',
+    'check.noMoves': 'Keine Züge gefunden',
+    'check.noRepertoire': 'Kein Repertoire geladen — ⚙ klicken zum Einrichten',
+    'check.white': 'Weiß',
+    'check.black': 'Schwarz',
+
+    'tools.check': 'Aktuelle Partie gegen Repertoire prüfen',
+    'tools.searchFen': 'FEN vor Abweichung in Chessable suchen',
+    'tools.copyPgn': 'Partie-PGN kopieren',
+    'tools.saveGame': 'Partie in RookHub speichern',
+    'tools.saved': 'Partie gespeichert',
+    'tools.savedWithLink': 'Gespeichert · Teilen-Link kopiert',
+
+    'err.noBackground': 'keine Antwort vom Background-Worker',
+    'err.tokenInvalid': 'Token ungültig oder abgelaufen.',
+    'err.http': 'HTTP {status}',
+    'err.rookhubHttp': 'RookHub HTTP {status}',
+    'err.urlTokenMissing': 'RookHub: URL oder Token fehlt.',
+    'err.noToken': 'kein Token in der Antwort',
+    'err.notConnected': 'Nicht mit RookHub verbunden',
+    'err.noChessableToken': 'Kein Chessable-Token (auf chessable.com eingeloggt?)',
+    'err.chessableTokenNoUid': 'Chessable-Token ohne uid',
+    'err.chessableHttp': 'Chessable HTTP {status}',
+    'err.noCourse': 'Kein Kurs erkannt',
+    'err.libMissing': 'Interne lib fehlt',
+    'err.noChapters': 'Keine Kapitel gefunden',
+    'err.noLines': 'Keine Linien geholt',
+
+    'menu.check': '♟ Prüfen',
+    'menu.settings': '⚙ Einstellungen',
+    'menu.copyChessableToken': '🔑 Chessable-Token kopieren',
+    'menu.noChessableToken': 'RepCheck: Kein Chessable-Token im localStorage gefunden — eingeloggt?',
+    'menu.chessableTokenCopied': 'RepCheck: Chessable-Token in die Zwischenablage kopiert.',
+  },
+
+  hr: {
+    'lang.label': 'Jezik',
+    'lang.auto': 'Automatski ({lang})',
+    'popup.share.heading': 'Poveznica na trenutnu liniju',
+    'popup.share.copy': 'Kopiraj',
+    'popup.share.loading': 'učitavanje…',
+    'popup.share.noMoves': 'Na ovoj stranici nema niza poteza.',
+    'popup.share.ready': {
+      one: '{count} polupotez · klikni „Kopiraj“',
+      few: '{count} polupoteza · klikni „Kopiraj“',
+      other: '{count} polupoteza · klikni „Kopiraj“',
+    },
+    'popup.share.failed': 'Poveznica nije uspjela: {error}',
+    'popup.copied': 'kopirano ✓',
+    'popup.copyFailed': 'Kopiranje nije uspjelo',
+    'popup.status.loading': 'Učitavanje stanja…',
+    'popup.check': 'Provjeri',
+    'popup.settings': 'Postavke',
+    'popup.rep.heading': {
+      one: 'Repertoar ({count})',
+      few: 'Repertoari ({count})',
+      other: 'Repertoari ({count})',
+    },
+    'popup.rep.unnamed': '(bez naziva)',
+    'popup.rep.files': {
+      one: '{count} PGN',
+      few: '{count} PGN-a',
+      other: '{count} PGN-ova',
+    },
+    'popup.rookhub.loading': 'RookHub: učitavanje repertoara…',
+    'popup.rookhub.connected': {
+      one: 'RookHub povezan · {count} repertoar',
+      few: 'RookHub povezan · {count} repertoara',
+      other: 'RookHub povezan · {count} repertoara',
+    },
+    'popup.rookhub.noOpenings': 'RookHub povezan · nema repertoara otvaranja',
+    'popup.rookhub.error': 'RookHub: {error}',
+    'popup.local.loaded': {
+      one: 'Lokalno: učitano {count} otvaranje (prije {min} min)',
+      few: 'Lokalno: učitana {count} otvaranja (prije {min} min)',
+      other: 'Lokalno: učitano {count} otvaranja (prije {min} min)',
+    },
+    'popup.none': 'Još nije učitan nijedan repertoar',
+    'popup.chessable.heading': 'Chessable token',
+    'popup.chessable.copy': 'Kopiraj token',
+    'popup.chessable.justCaptured': 'upravo zabilježen',
+    'popup.chessable.capturedAgo': 'zabilježen prije {min} min',
+    'popup.buttons.heading': 'Chessable gumbi',
+    'popup.buttons.intro': 'Koji se gumbi prikazuju dolje desno na chessable.com (Practice način).',
+    'popup.buttons.fullscreen': 'Cijeli zaslon',
+    'popup.open.chesscom': 'chess.com',
+    'popup.open.lichess': 'lichess.org',
+    'popup.needTab': 'Najprije otvori chess.com ili lichess.org u aktivnoj kartici.',
+    'popup.error': 'Greška: {error}',
+    'import.heading': 'RookHub uvoz (preglednik)',
+    'import.target.repertoire': 'Repertoar',
+    'import.target.book': 'Tečaj/knjiga',
+    'import.crawl': '⚡ Dohvati tečaj preko mog preglednika',
+    'import.cancel': 'Odustani',
+    'import.captured': {
+      one: 'Uvezi snimljene linije ({count} linija)',
+      few: 'Uvezi snimljene linije ({count} linije)',
+      other: 'Uvezi snimljene linije ({count} linija)',
+    },
+    'import.capturedPlain': 'Uvezi snimku',
+    'import.live': 'Dodavaj linije uživo tijekom klikanja',
+    'import.notReady': 'Content script nije spreman — ponovno učitaj stranicu.',
+    'import.course': 'Tečaj: {name}',
+    'import.courseId': 'ID tečaja {id}',
+    'import.openCourse': 'Otvori neki Chessable tečaj.',
+    'import.onRookhub': 'Na RookHubu: {done}/{total} linija ({pct}%)',
+    'import.starting': 'Pokrećem …',
+    'import.importing': 'Uvozim …',
+    'import.warn.title': 'Rizik od blokade računa',
+    'import.warn.body': '„Dohvati tečaj preko mog preglednika“ automatizirano i u brzom slijedu poziva Chessable API. To može prekršiti Chessableove uvjete korištenja i u najgorem slučaju dovesti do blokade tvojeg računa.',
+    'import.warn.own': 'Koristi to samo za vlastite tečajeve i na vlastitu odgovornost.',
+    'import.warn.confirm': 'Stvarno nastaviti?',
+    'import.throttled': 'Chessable usporava promet (HTTP {status}) — čekam {seconds} s (pokušaj {attempt}/{max}) …',
+    'import.fetchingStructure': 'Dohvaćam strukturu tečaja …',
+    'import.aborted': 'Prekinuto.',
+    'import.abortRequested': 'Zatražen prekid …',
+    'import.nothingNew': {
+      one: 'Ništa novo — {count} linija je već na RookHubu.',
+      few: 'Ništa novo — sve {count} linije već su na RookHubu.',
+      other: 'Ništa novo — svih {count} linija već je na RookHubu.',
+    },
+    'import.fetchingLines': 'Dohvaćam nove linije … {done}/{total}',
+    'import.appending': 'Dodajem nove linije …',
+    'import.doneAppended': {
+      one: 'Gotovo: dodana {count} nova linija.',
+      few: 'Gotovo: dodane {count} nove linije.',
+      other: 'Gotovo: dodano {count} novih linija.',
+    },
+    'import.doneAppendedSkipped': {
+      one: 'Gotovo: dodana {count} nova linija (već postojećih: {skipped}).',
+      few: 'Gotovo: dodane {count} nove linije (već postojećih: {skipped}).',
+      other: 'Gotovo: dodano {count} novih linija (već postojećih: {skipped}).',
+    },
+    'import.doneImportedPuzzles': {
+      one: 'Gotovo: uvezena {count} zagonetka.',
+      few: 'Gotovo: uvezene {count} zagonetke.',
+      other: 'Gotovo: uvezeno {count} zagonetki.',
+    },
+    'import.doneImportedLines': {
+      one: 'Gotovo: uvezena {count} linija.',
+      few: 'Gotovo: uvezene {count} linije.',
+      other: 'Gotovo: uvezeno {count} linija.',
+    },
+    'import.nothingCaptured': 'Ništa nije snimljeno.',
+    'import.importingCapture': 'Uvozim snimku …',
+    'import.liveAppended': {
+      one: 'Uživo: dodana {count} linija ({sent} poslano).',
+      few: 'Uživo: dodane {count} linije ({sent} poslano).',
+      other: 'Uživo: dodano {count} linija ({sent} poslano).',
+    },
+    'import.liveError': 'Greška uživo: {error}',
+    'import.error': 'Greška: {error}',
+    'panel.heading': 'Postavke repertoara',
+    'panel.rookhub': 'RookHub:',
+    'panel.connect': 'Poveži',
+    'panel.refresh': 'Osvježi',
+    'panel.noAccount': 'Još nemaš račun? ',
+    'panel.register': 'Registriraj se na {host}',
+    'panel.tokenHint': ' · zatim izradi token pod Profile → „Extension tokens“.',
+    'panel.folder': 'Učitaj iz mape:',
+    'panel.selectFolder': 'Odaberi PGN mapu',
+    'panel.folderLoaded': '(učitano)',
+    'panel.noFolder': '(nije odabrana mapa)',
+    'panel.paste': 'Ili zalijepi PGN:',
+    'panel.pastePlaceholder': 'Ovdje zalijepi PGN repertoara…',
+    'panel.loadPgn': 'Učitaj PGN',
+    'panel.close': 'Zatvori',
+    'panel.loaded': 'Repertoar učitan',
+    'panel.notLoaded': 'Nijedan repertoar nije učitan',
+    'panel.loadedFiles': {
+      one: 'Repertoar učitan: {count} datoteka',
+      few: 'Repertoar učitan: {count} datoteke',
+      other: 'Repertoar učitan: {count} datoteka',
+    },
+    'panel.loadedText': 'Repertoar učitan iz teksta',
+    'panel.noPgnFiles': 'U mapi nema .pgn datoteka',
+    'status.needUrlToken': 'RookHub: potrebni su URL i token.',
+    'status.connecting': 'RookHub: povezivanje…',
+    'status.refreshing': 'RookHub: osvježavanje…',
+    'status.notConfigured': 'RookHub: još nije podešen.',
+    'status.connectedNoOpenings': 'RookHub: povezan, ali nije pronađen nijedan repertoar otvaranja.',
+    'status.connectedFiles': {
+      one: 'RookHub: povezan ({count} datoteka).',
+      few: 'RookHub: povezan ({count} datoteke).',
+      other: 'RookHub: povezan ({count} datoteka).',
+    },
+    'check.outOfRep': 'Izvan repertoara na potezu {move} ({color}: {san})',
+    'check.transpositions': {
+      one: '{count} transpozicija',
+      few: '{count} transpozicije',
+      other: '{count} transpozicija',
+    },
+    'check.inRep': 'U repertoaru ✓',
+    'check.inRepWithGaps': 'U repertoaru ✓ ({gaps})',
+    'check.fullyInRep': 'Partija je u cijelosti u repertoaru ✓',
+    'check.noMoves': 'Nema pronađenih poteza',
+    'check.noRepertoire': 'Nijedan repertoar nije učitan — klikni ⚙ za postavljanje',
+    'check.white': 'Bijeli',
+    'check.black': 'Crni',
+    'tools.check': 'Provjeri trenutnu partiju u odnosu na repertoar',
+    'tools.searchFen': 'Potraži FEN prije odstupanja na Chessableu',
+    'tools.copyPgn': 'Kopiraj PGN partije',
+    'tools.saveGame': 'Spremi partiju u RookHub',
+    'tools.saved': 'Partija spremljena',
+    'tools.savedWithLink': 'Spremljeno · poveznica za dijeljenje kopirana',
+    'err.noBackground': 'nema odgovora od background workera',
+    'err.tokenInvalid': 'Token nije valjan ili je istekao.',
+    'err.http': 'HTTP {status}',
+    'err.rookhubHttp': 'RookHub HTTP {status}',
+    'err.urlTokenMissing': 'RookHub: nedostaje URL ili token.',
+    'err.noToken': 'u odgovoru nema tokena',
+    'err.notConnected': 'Nije povezano s RookHubom',
+    'err.noChessableToken': 'Nema Chessable tokena (jesi li prijavljen na chessable.com?)',
+    'err.chessableTokenNoUid': 'Chessable token bez uid',
+    'err.chessableHttp': 'Chessable HTTP {status}',
+    'err.noCourse': 'Nije prepoznat nijedan tečaj',
+    'err.libMissing': 'nedostaje interna lib',
+    'err.noChapters': 'Nema pronađenih poglavlja',
+    'err.noLines': 'Nije dohvaćena nijedna linija',
+    'menu.check': '♟ Provjeri',
+    'menu.settings': '⚙ Postavke',
+    'menu.copyChessableToken': '🔑 Kopiraj Chessable token',
+    'menu.noChessableToken': 'RepCheck: u localStorageu nije pronađen Chessable token — jesi li prijavljen?',
+    'menu.chessableTokenCopied': 'RepCheck: Chessable token kopiran u međuspremnik.',
+  },
+};
+
+/** Verfügbare Sprache aus einem BCP-47-Tag ableiten („de-AT" → „de"), sonst die Rückfallsprache. */
+function rcNormalizeLang(tag) {
+  const kurz = String(tag || '').toLowerCase().split(/[-_]/)[0];
+  return RC_LANGS.indexOf(kurz) >= 0 ? kurz : RC_FALLBACK;
+}
+
+/**
+ * Sprache bestimmen: ausdrückliche Wahl des Nutzers schlägt alles, sonst die Browsersprache,
+ * sonst Englisch. `gespeichert` kommt aus dem jeweiligen Speicher der Distribution
+ * (chrome.storage.local bzw. GM-Storage) — dieses Modul kennt keinen Speicher, damit es
+ * unverändert in Node, im Content-Script und im Userscript läuft.
+ */
+function rcResolveLang(gespeichert, navigatorSprachen) {
+  if (gespeichert && RC_LANGS.indexOf(String(gespeichert).toLowerCase()) >= 0) {
+    return String(gespeichert).toLowerCase();
+  }
+  const liste = Array.isArray(navigatorSprachen) ? navigatorSprachen : [];
+  for (const tag of liste) {
+    const kurz = String(tag || '').toLowerCase().split(/[-_]/)[0];
+    if (RC_LANGS.indexOf(kurz) >= 0) return kurz;
+  }
+  return RC_FALLBACK;
+}
+
+/** Plural-Variante wählen. Ohne Intl (alte Umgebung) bleibt es bei one/other. */
+function rcPluralForm(lang, count) {
+  try {
+    return new Intl.PluralRules(lang).select(count);
+  } catch (e) {
+    return count === 1 ? 'one' : 'other';
+  }
+}
+
+/** Eintrag zu einer fertigen Vorlage auflösen: Plural-Objekte auf die passende Variante. */
+function rcTemplate(eintrag, lang, params) {
+  if (typeof eintrag === 'string') return eintrag;
+  if (!eintrag || typeof eintrag !== 'object') return null;
+  const count = params && typeof params.count === 'number' ? params.count : 0;
+  const form = rcPluralForm(lang, count);
+  // Kroatisch kennt one/few/other; fehlt eine Variante, greift `other`, dann `one`.
+  return eintrag[form] || eintrag.other || eintrag.one || null;
+}
+
+/**
+ * Übersetzen. `{name}`-Platzhalter werden aus `params` gefüllt; ein fehlender Platzhalter bleibt
+ * wörtlich stehen (sichtbar statt still leer). Unbekannte Schlüssel geben den Schlüssel zurück.
+ */
+function rcTranslate(lang, key, params) {
+  const sprache = RC_LANGS.indexOf(lang) >= 0 ? lang : RC_FALLBACK;
+  const tabelle = RC_MESSAGES[sprache] || {};
+  let vorlage = rcTemplate(tabelle[key], sprache, params);
+  if (vorlage == null && sprache !== RC_FALLBACK) {
+    vorlage = rcTemplate((RC_MESSAGES[RC_FALLBACK] || {})[key], RC_FALLBACK, params);
+  }
+  if (vorlage == null) return key;
+  if (!params) return vorlage;
+  return vorlage.replace(/\{(\w+)\}/g, (ganz, name) => (
+    Object.prototype.hasOwnProperty.call(params, name) && params[name] != null
+      ? String(params[name])
+      : ganz
+  ));
+}
+
+// Node/CommonJS-Export (Tests) + Browser-Global (Content-Scripts). Im Userscript steht der
+// Kern direkt im IIFE-Scope, dort greift keiner der beiden Zweige.
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = { RC_LANGS, RC_FALLBACK, RC_MESSAGES, rcNormalizeLang, rcResolveLang, rcPluralForm, rcTranslate };
+}
+if (typeof self !== 'undefined') {
+  self.RepCheckI18n = { LANGS: RC_LANGS, FALLBACK: RC_FALLBACK, MESSAGES: RC_MESSAGES, normalizeLang: rcNormalizeLang, resolveLang: rcResolveLang, translate: rcTranslate };
+}
