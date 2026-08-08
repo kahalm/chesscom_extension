@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RepCheck — Opening Repertoire Deviation Checker
 // @namespace    https://github.com/kahalm/repcheck
-// @version      1.44.0
+// @version      1.44.1
 // @require      https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js
 // @description  Shows where your game deviates from your opening repertoire (chess.com + lichess, PGN files or RookHub). On chessable.com: copy/search FEN, remember a line to RookHub, show earned XP, report active training time to RookHub, read the API token.
 // @author       kahalm
@@ -3611,6 +3611,9 @@
     const ZEN_STYLE_ID = 'repcheck-zen-style';
     let zenBoard = null;
     let zenPrevStyle = '';
+    /** Chessables Annotations-Layer (`svg#drawings`: Pfeile, Kreise) — sein Stil vor dem Zen.
+     *  null = noch nicht angefasst. */
+    let zenPrevDrawingsStyle = null;
     let zenRescale = null;
     let zenApplied = 0;
     let zenPokeTimer = null;
@@ -3640,6 +3643,22 @@
         zenPokeTimer = null;
         window.dispatchEvent(new Event('resize'));
       }, 60);
+    }
+
+
+    /**
+     * Chessables Annotations-Layer: `svg#drawings` — dort liegen Pfeile UND Feld-Kreise.
+     *
+     * Er ist ein GESCHWISTER des Bretts (beide unter `div.noScrollingWithFinger`) und deckt
+     * sich im Normalfall exakt damit, weil er `position:absolute; left:0; top:0` im selben
+     * positionierten Elternteil hat. Im Zen ziehen wir das Brett auf `position:fixed` — der
+     * Layer bleibt zurueck. Gemessen am 08.08. (Snapshots mtpfeil/ohnepfeil): Brett bei
+     * (152,13), Layer bei (1187,545), also 1035 px rechts und 532 px unter dem Brett. Der Pfeil
+     * war die ganze Zeit im DOM (`<line stroke="#e02828" marker-end="url(#arrowhead-r)">`), nur
+     * eben neben dem Brett — und mit `z-index:10` zusaetzlich unter unserem Backdrop.
+     */
+    function zenDrawingsLayer() {
+      return document.getElementById('drawings');
     }
 
     function enterZen(btn) {
@@ -3683,6 +3702,22 @@
           s.setProperty(p, target + 'px', 'important');
         }
         if (target !== zenApplied) { zenApplied = target; zenPokeLayout(); }
+        // Annotations-Layer mit dem Brett mitziehen (siehe zenDrawingsLayer): dieselbe
+        // Geometrie, ueber dem Backdrop, und ohne Klicks abzufangen — Pfeile sind Anzeige.
+        const dr = zenDrawingsLayer();
+        if (dr) {
+          if (zenPrevDrawingsStyle === null) zenPrevDrawingsStyle = dr.getAttribute('style') || '';
+          const ds = dr.style;
+          ds.setProperty('position', 'fixed', 'important');
+          ds.setProperty('left', `calc(50% - ${Math.round(reserve / 2)}px)`, 'important');
+          ds.setProperty('top', '50%', 'important');
+          ds.setProperty('margin', '0', 'important');
+          ds.setProperty('transform', 'translate(-50%, -50%)', 'important');
+          ds.setProperty('z-index', '2147483611', 'important');   // knapp ueber dem Brett
+          ds.setProperty('pointer-events', 'none', 'important');
+          ds.setProperty('width', target + 'px', 'important');
+          ds.setProperty('height', target + 'px', 'important');
+        }
       };
       zenRescale();
       // Kommentare/Züge standardmäßig AN: im Vollbild ist der freie Platz daneben sonst
@@ -3708,6 +3743,15 @@
         if (zenPrevStyle) zenBoard.setAttribute('style', zenPrevStyle);
         else zenBoard.removeAttribute('style');
         zenBoard = null;
+      }
+      // Annotations-Layer zurueckgeben; Chessable rechnet ihn beim naechsten resize neu.
+      if (zenPrevDrawingsStyle !== null) {
+        const dr = zenDrawingsLayer();
+        if (dr) {
+          if (zenPrevDrawingsStyle) dr.setAttribute('style', zenPrevDrawingsStyle);
+          else dr.removeAttribute('style');
+        }
+        zenPrevDrawingsStyle = null;
       }
       // Chessable-Layout zurück auf Normalgröße rechnen lassen (board.resize()).
       window.dispatchEvent(new Event('resize'));

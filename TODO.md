@@ -27,23 +27,34 @@ Wiederkehrend (kein einmaliges TODO):
 
 ## Chessable-Trainingsmodus (User-Wunsch 2026-08-08)
 
-- [ ] **Pfeile/Markierungen fehlen im Vollbild (Zen-Modus)** — MESSUNG 08.08. ausgewertet, noch offen
-  Ergebnis der Dumps (`snapshotPfeile*.json`): das einzige `<svg>` IM Brett ist Chessables
-  Hintergrund (`board-blue-fallback chessboard-bg`, `z-index:-1`) — es skaliert im Zen korrekt mit
-  (499×500 → 834×834). Ein Pfeil-/Annotations-Layer war in BEIDEN Snapshots **gar nicht im DOM**,
-  also war zum Messzeitpunkt kein Pfeil aktiv. Dafür ist der Mechanismus jetzt bekannt und belegt:
-  Chessables Zug-Rückmeldung sitzt in `.board-footer` (in `#row-practice__col2`), also AUSSERHALB
-  des Bretts — und liegt damit hinter unserem Zen-Backdrop (z-index 2147483600). Pfeile dürften
-  denselben Weg gehen. Nächster Schritt: EIN Snapshot, während ein Pfeil sichtbar ist (Inspector
-  v0.2.0 erfasst `overlays` dokumentweit) — dann ist entschieden, ob ein gezieltes Hochziehen des
-  Layers reicht.
-  Auf chessable.com zeigt das Brett im Zen-Vollbild die Pfeile/Feld-Markierungen nicht mehr an,
-  die im Normalmodus da sind. Vermutung (zu prüfen): Chessable rendert sie in einem eigenen
-  Layer/SVG, der außerhalb des Brett-Elements hängt und deshalb hinter dem Backdrop landet bzw.
-  nicht mit skaliert wird — analog zur Schwebefigur beim Drag&Drop, für die `body > .piece-417db`
-  schon eine z-Index-Regel im Zen-Style bekommt (`chessable-fen.js`, `ZEN_STYLE_ID`).
-  Erst mit dem Debug-Inspector (`debug/chessable-inspector.user.js`) einen Snapshot im Normal- und
-  im Zen-Modus vergleichen, dann den Layer gezielt hochziehen.
+- [x] **Pfeile/Markierungen fehlen im Vollbild (Zen-Modus)** — GELÖST v1.44.1
+  Aufgeklärt durch vier gepaarte Snapshots (mitkreise/ohnekreis, mtpfeil/ohnepfeil, 08.08.),
+  jeweils Normalmodus gegen Zen. Der Layer heißt **`svg#drawings`** und trägt Pfeile UND
+  Feld-Kreise.
+
+  **Er war nie weg.** In `ohnepfeil.json` (Zen) steht der Pfeil vollständig im DOM:
+  `<line stroke="#e02828" stroke-width="4" marker-end="url(#arrowhead-r)" opacity="1">`.
+  Er lag nur woanders:
+
+  | | Brett | `svg#drawings` |
+  |---|---|---|
+  | Normal | (431,5 / 113) 503×503 | (431,5 / 113) 503×503 — deckungsgleich |
+  | Zen | (152 / 13) 838×838, `position:fixed` | (1187 / 545) 838×838, `position:absolute` |
+
+  Also 1035 px rechts und 532 px unter dem Brett, dazu mit `z-index:10` unter unserem Backdrop
+  (2147483600). Ursache: der Layer ist ein GESCHWISTER des Bretts (beide unter
+  `div.noScrollingWithFinger`) und deckt sich normalerweise nur deshalb mit ihm, weil er
+  `position:absolute; left:0; top:0` im selben positionierten Elternteil hat. Sobald wir das
+  Brett auf `position:fixed` ziehen, bleibt er zurück. Die GRÖSSE zog Chessable korrekt nach
+  (838) — nur die Position nicht.
+
+  Fix: `zenRescale` gibt dem Layer dieselbe Geometrie wie dem Brett (fixed, gleiche
+  left/top/transform/Größe), hebt ihn knapp über das Brett und setzt `pointer-events:none`,
+  damit er keine Klicks abfängt. `exitZen` stellt den vorherigen Stil wieder her.
+
+  **Lehre:** die erste Messung schloss aus zwei Snapshots ohne aktiven Pfeil „kein Layer im
+  DOM". Zwei Snapshots mit sichtbarer Annotation hätten die Frage sofort entschieden — bei
+  „ist X überhaupt da?" gehört ein Paar mit/ohne gemessen, nicht ein Zustand.
 
 - [x] **Zug-Feedback anzeigen: Overstudy vs. +XP** — ERLEDIGT v1.40.0, zwei Zählfehler behoben in
   v1.41.1: (a) wortgleiche Meldungen hintereinander (drei „Overstudied") fielen auf EINEN Eintrag
