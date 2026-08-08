@@ -311,6 +311,13 @@
   let lineFeedback = [];
   let feedbackObserver = null;
   let watchedFeedbackRoot = null;
+  /** Zuletzt gelesene Meldung: Wortlaut, tragender Knoten und Halbzug-Nummer des Bretts.
+   *  Alle drei zusammen entscheiden, ob eine Meldung NEU ist. Der Wortlaut allein reicht
+   *  nicht: drei „Overstudied" hintereinander sind wortgleich und fielen dadurch auf einen
+   *  einzigen Eintrag zusammen. */
+  let letzterFeedbackText = '';
+  let letzterFeedbackNode = null;
+  let letzterFeedbackPly = null;
 
   /** Betrag aus „+60 " bzw. aus dem Gesamttext ziehen; null, wenn es kein XP-Ereignis ist. */
   function parseXp(pointsText, fullText) {
@@ -340,6 +347,18 @@
     correct: '#2e7d32', wrong: '#c62828', alt: '#1565c0', giveup: '#6a1b9a', timeup: '#ef6c00',
   };
 
+  /** Halbzug-Nummer der angezeigten Stellung (0-basiert); null, wenn keine FEN lesbar ist.
+   *  Sie leistet zweierlei: wortgleiche Meldungen auseinanderhalten (verschiedene Zuege) und
+   *  den Linienwechsel erkennen. */
+  function feedbackPly() {
+    const fen = extractFenFromReact();
+    if (!fen) return null;
+    const teile = fen.trim().split(/\s+/);
+    const zug = parseInt(teile[5], 10);
+    if (!Number.isFinite(zug)) return null;
+    return (zug - 1) * 2 + (teile[1] === 'b' ? 1 : 0);
+  }
+
   function initFeedbackTracker() {
     const notif = document.querySelector('[data-testid="moveNotification"]');
     const root = notif && notif.parentElement;
@@ -348,11 +367,34 @@
     feedbackObserver?.disconnect();
     watchedFeedbackRoot = root;
 
-    let letzter = '';
-    const lesen = () => {
+    const lesen = (records) => {
+      const notifEl = root.querySelector('[data-testid="moveNotification"]') || root;
       const text = (root.textContent || '').replace(/ /g, ' ').trim();
-      if (!text || text === letzter) return;
-      letzter = text;
+      // Leerlauf zwischen zwei Zuegen: Marke loeschen, damit die naechste Meldung auch dann
+      // als neues Ereignis zaehlt, wenn sie wortgleich ist.
+      if (!text) { letzterFeedbackText = ''; letzterFeedbackNode = null; return; }
+      // Ein reines Attribut-Zucken (Ein-/Ausblend-Animation) ist KEINE neue Meldung — sonst
+      // zaehlte der Antwortzug des Gegners dieselbe Meldung ein zweites Mal.
+      const inhaltlich = !records || records.some((r) => r.type !== 'attributes');
+      const ply = feedbackPly();
+      // Wortgleiches zaehlt, wenn es zu einem anderen Halbzug gehoert oder in einem frisch
+      // eingehaengten Knoten steht.
+      const neu = text !== letzterFeedbackText
+        || notifEl !== letzterFeedbackNode
+        || (inhaltlich && ply != null && ply !== letzterFeedbackPly);
+      if (!neu) return;
+      // Linienwechsel: innerhalb EINER Linie waechst die Halbzug-Nummer monoton in kleinen
+      // Schritten (ein eigener Zug + Antwortzug). Springt sie zurueck oder weit nach vorn, hat
+      // eine neue Linie begonnen — sonst summierte sich alles ueber die Sitzung auf. Der Klick
+      // auf „Next" ist nur noch ein Zusatzsignal: er greift nicht, wenn Chessable per Tastatur
+      // oder automatisch weiterschaltet oder der Knopf in der Kontosprache anders heisst.
+      if (ply != null && letzterFeedbackPly != null
+          && (ply < letzterFeedbackPly || ply > letzterFeedbackPly + 3)) {
+        resetLineFeedback();
+      }
+      letzterFeedbackText = text;
+      letzterFeedbackNode = notifEl;
+      letzterFeedbackPly = ply;
       const points = root.querySelector('.current-points');
       const xp = parseXp(points && points.textContent, text);
       lineFeedback.push({ text, xp, kind: feedbackKind(root) });
@@ -434,6 +476,9 @@
   /** Chessables "Next variation"/"Weiter" beendet die Linie -> Eintraege der naechsten
    *  Linie frisch beginnen. Ein Klick auf UNSEREN Pfeil-Knopf zaehlt genauso (er klickt
    *  Chessables Knopf durch). */
+  /** Beschriftungen von Chessables „weiter"-Knopf, so weit bekannt. Nur ein ZUSATZ-Signal —
+   *  die verlaessliche Linienwechsel-Erkennung sitzt in `lesen` (Halbzug-Sprung). */
+  const NEXT_LABEL_RE = /^(next( variation| chapter| move| line)?|continue|weiter|fortfahren|n(ä|ae)chste[rs]?( variante| linie| kapitel| zug)?)$/i;
   let lineResetAttached = false;
   function attachLineResetListener() {
     if (lineResetAttached) return;
@@ -441,13 +486,18 @@
     document.body.addEventListener('click', (e) => {
       const el = e.target instanceof Element ? e.target.closest('button, a, [role="button"]') : null;
       if (!el) return;
-      const t = (el.textContent || '').trim();
-      if (/^(next( variation| chapter| move| line)?|weiter)$/i.test(t) || el.id === 'repcheck-zen-next') resetLineFeedback();
+      const t = (el.textContent || '').trim()
+        || (el.getAttribute('aria-label') || '').trim()
+        || (el.getAttribute('title') || '').trim();
+      if (NEXT_LABEL_RE.test(t) || el.id === 'repcheck-zen-next') resetLineFeedback();
     }, true);
   }
 
   function resetLineFeedback() {
     lineFeedback = [];
+    letzterFeedbackText = '';
+    letzterFeedbackNode = null;
+    letzterFeedbackPly = null;
     hideFeedbackList();
     const badge = document.getElementById(FEEDBACK_ID);
     if (badge) badge.style.display = 'none';
@@ -980,7 +1030,9 @@
     feedbackObserver?.disconnect();
     feedbackObserver = null;
     watchedFeedbackRoot = null;
-    hideFeedbackList();
+    // Practice-Mode verlassen -> die Linie ist vorbei; Eintraege NICHT in die naechste Sitzung
+    // mitschleppen.
+    resetLineFeedback();
   }
 
   function ensureUi() {
