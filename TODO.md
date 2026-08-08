@@ -53,22 +53,14 @@ Wiederkehrend (kein einmaliges TODO):
   Dort wurden „Overstudied"/„Incorrect"/„Alternative" bewusst ignoriert; jetzt sollen sie
   unterschieden und angezeigt werden. Passende Stelle für die Anzeige suchen (Zen-Leiste?).
 
-- [ ] **Vollbild nach dem Refresh-Knopf erhalten — GEPRÜFT: nur teilweise möglich**
-  Der Refresh-Knopf macht `location.reload()` (`chessable-fen.js:678`). Echtes Vollbild kann das
-  NICHT überleben: der Zen-Modus nutzt `document.documentElement.requestFullscreen()`
-  (`chessable-fen.js:480`), also **Element-Vollbild** — das ist Dokument-Zustand und geht bei jeder
-  Navigation verloren. Es danach automatisch wiederherzustellen ist ausgeschlossen, weil
-  `requestFullscreen()` eine frische Nutzer-Interaktion verlangt; ein Aufruf beim Laden wird vom
-  Browser abgelehnt. (Anders als F11-Browservollbild, das ein Reload überlebt — das können wir aber
-  nicht setzen.)
-  **Machbar ist die halbe Miete:** der Zen-Modus besteht aus ZWEI Teilen — (a) unserem eigenen
-  Backdrop + vergrößertem Brett (reines DOM/CSS, `ZEN_BACKDROP_ID`) und (b) dem Browser-Vollbild.
-  Teil (a) lässt sich nach dem Reload sofort und ohne Nutzergeste wiederherstellen (Flag in
-  `sessionStorage` vor dem Reload setzen, beim Init auslesen und `enterZen` ohne den
-  `requestFullscreen`-Aufruf anwenden). Der Nutzer landet dann wieder auf großem Brett mit dunklem
-  Hintergrund und braucht nur EINEN Klick auf ⛶, um auch das Browser-Vollbild zurückzuholen.
-  Offen zu entscheiden: ob dieser Zwischenzustand gewünscht ist oder verwirrt (Knopf zeigt dann
-  „⛶", obwohl es schon fast wie Vollbild aussieht).
+- [x] **Vollbild nach dem Refresh-Knopf erhalten** — GEBAUT (v1.39.0) und auf Nutzerwunsch WIEDER
+  ENTFERNT (v1.41.0). Echtes Vollbild kann einen Reload nicht überleben (`requestFullscreen()`
+  verlangt eine frische Nutzergeste); wiederhergestellt wurde deshalb nur der Zen-Aufbau ohne
+  Browser-Vollbild, mit einem dritten Knopf-Zustand „Vollbild fortsetzen". Genau dieser
+  Zwischenzustand hat in der Praxis gestört — der Vorbehalt aus der Planung hat sich bestätigt.
+  Falls das Thema wiederkommt: nicht denselben Weg nochmal gehen, sondern beim Refresh gar nicht
+  erst aus dem Zen fallen (z. B. Inhalt neu laden statt `location.reload()`).
+
 
 - [ ] **Nach dem Refresh automatisch an die richtige Stelle zurückspielen** (User-Wunsch 2026-08-08)
   Zweck des Refresh-Knopfes ist, einen Verklicker nicht als Fehler werten zu lassen — er wirft den

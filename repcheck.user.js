@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RepCheck — Opening Repertoire Deviation Checker
 // @namespace    https://github.com/kahalm/repcheck
-// @version      1.40.0
+// @version      1.41.0
 // @require      https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js
 // @description  Shows where your game deviates from your opening repertoire (chess.com + lichess, PGN files or RookHub). On chessable.com: copy/search FEN, remember a line to RookHub, show earned XP, report active training time to RookHub, read the API token.
 // @author       kahalm
@@ -2638,7 +2638,10 @@
       feedbackObserver.observe(root, { childList: true, characterData: true, subtree: true, attributes: true });
     }
 
-    /** Summe der erfassten Beträge (nur die, die wirklich einen Betrag hatten). */
+    /** Betrag mit Vorzeichen; 0 wird als „+0" geschrieben, damit die Anzeige einheitlich bleibt. */
+    function signiert(n) { return (n >= 0 ? '+' : '') + n; }
+
+    /** Summe der erfassten Beträge (Meldungen ohne Betrag zählen als 0). */
     function feedbackSum() {
       return lineFeedback.reduce((s, e) => s + (e.xp || 0), 0);
     }
@@ -2649,13 +2652,13 @@
       const last = lineFeedback[lineFeedback.length - 1];
       if (!last) { badge.style.display = 'none'; hideFeedbackList(); return; }
       const sum = feedbackSum();
-      // Angezeigt wird die letzte Meldung; sobald mehrere Beträge zusammenkommen, die Summe dazu.
-      badge.textContent = sum && lineFeedback.filter((e) => e.xp).length > 1
-        ? `${last.text} · Σ ${sum > 0 ? '+' : ''}${sum}`
-        : last.text;
+      // JEDER Zug bekommt einen Betrag — auch „Overstudied" (dann +0), damit die Anzeige nicht
+      // zwischen Zahl und Wort springt. Dahinter die laufende Summe dieser Linie. Der
+      // Original-Wortlaut (er trägt auch die Kontosprache) bleibt im Tooltip.
+      badge.textContent = `${signiert(last.xp || 0)} · Σ ${signiert(sum)}`;
       badge.style.background = FEEDBACK_COLORS[last.kind] || 'rgba(0,0,0,0.45)';
       badge.style.display = 'inline-flex';
-      badge.title = 'Zug-Rückmeldung — klicken für die Einzelbeträge dieser Linie';
+      badge.title = `${last.text} — klicken für die Einzelbeträge dieser Linie`;
       const list = document.getElementById(FEEDBACK_LIST_ID);
       if (list && list.style.display !== 'none') renderFeedbackList();
     }
@@ -2675,7 +2678,7 @@
         document.body.appendChild(list);
       }
       const zeilen = lineFeedback.map((e, i) => {
-        const betrag = e.xp != null ? `${e.xp > 0 ? '+' : ''}${e.xp}` : '—';
+        const betrag = signiert(e.xp || 0);
         return `<div style="display:flex;gap:10px;justify-content:space-between">
           <span style="opacity:.65">${i + 1}.</span>
           <span style="flex:1">${e.text.replace(/[<>&]/g, '')}</span>
@@ -2685,7 +2688,7 @@
       list.innerHTML = `<div style="opacity:.7;margin-bottom:4px">Diese Linie — erfasste Meldungen</div>${zeilen}
         <div style="border-top:1px solid rgba(255,255,255,.25);margin-top:6px;padding-top:4px;display:flex;justify-content:space-between">
           <span>Summe der erfassten Beträge</span>
-          <span style="font-variant-numeric:tabular-nums">${sum > 0 ? '+' : ''}${sum}</span></div>
+          <span style="font-variant-numeric:tabular-nums">${signiert(sum)}</span></div>
         <div style="opacity:.55;margin-top:4px;font-size:11px">Chessables Gesamtsumme kann abweichen
           (Boni am Linienende zählt RepCheck nicht mit).</div>`;
       list.style.display = 'block';
@@ -2779,13 +2782,6 @@
     // board.resize() die squareSize echt neu berechnet.
     const ZEN_BACKDROP_ID = 'repcheck-zen-backdrop';
     const ZEN_STYLE_ID = 'repcheck-zen-style';
-    // Nach dem Refresh-Knopf soll der Vollbild-Eindruck erhalten bleiben. ECHTES Vollbild kann das
-    // nicht: `requestFullscreen()` verlangt eine frische Nutzer-Interaktion, ein Aufruf beim Laden
-    // wird abgelehnt. Wiederherstellbar ist aber die HALBE Miete — unser eigener Zen-Aufbau
-    // (Backdrop + großes Brett) ist reines DOM/CSS und braucht keine Geste. Der Nutzer landet
-    // dadurch wieder auf großem Brett; ein Klick auf ⛶ holt das Browser-Vollbild zurück.
-    const ZEN_RESTORE_KEY = 'repcheck_zen_restore';
-    let zenRestoreDeadline = 0;
     let zenBoard = null;
     let zenPrevStyle = '';
     let zenRescale = null;
@@ -2819,7 +2815,7 @@
       }, 60);
     }
 
-    function enterZen(btn, skipBrowserFullscreen) {
+    function enterZen(btn) {
       const board = zenTarget();
       const rect = board && board.getBoundingClientRect();
       if (!board || !rect || !rect.width) { flash(btn, 'No board found', '#c62828'); return; }
@@ -2841,14 +2837,17 @@
       }
       zenApplied = 0;
       zenRescale = () => {
-        const target = Math.floor(0.97 * Math.min(window.innerWidth, window.innerHeight));
+        // Offenes Panel reserviert rechts Platz: das Brett wird entsprechend kleiner UND um
+        // die halbe Reserve nach links gerückt, statt sich mit dem Panel zu überlappen.
+        const reserve = zenReservedRight();
+        const target = Math.floor(0.97 * Math.min(window.innerWidth - reserve, window.innerHeight));
         // !important, weil Chessables eigener Resize-Handler style.width neu
         // setzt (fit-height-Berechnung): unsere Größe muss gewinnen — sein
         // board.resize() liest danach die tatsächliche (= unsere) Breite und
         // zeichnet die Felder in der neuen Größe.
         const s = zenBoard.style;
         s.setProperty('position', 'fixed', 'important');
-        s.setProperty('left', '50%', 'important');
+        s.setProperty('left', `calc(50% - ${Math.round(reserve / 2)}px)`, 'important');
         s.setProperty('top', '50%', 'important');
         s.setProperty('margin', '0', 'important');
         s.setProperty('transform', 'translate(-50%, -50%)', 'important');
@@ -2864,33 +2863,12 @@
       // wieder aus. Nach zenRescale, damit die Brettbreite für die Spaltenbreite schon steht.
       zenPanelShow(null, true);
       window.addEventListener('resize', zenRescale);
-      if (!skipBrowserFullscreen) requestBrowserFullscreen();
-      updateZenButton();
-    }
-
-    function requestBrowserFullscreen() {
       if (document.documentElement.requestFullscreen) {
         document.documentElement.requestFullscreen().catch(() => {});
       }
+      updateZenButton();
     }
 
-    /** Zen läuft, aber ohne Browser-Vollbild (nach einem Refresh wiederhergestellt). */
-    function zenWithoutBrowserFullscreen() { return zenActive() && !document.fullscreenElement; }
-
-    /** Nach dem Reload den Zen-Aufbau zurückholen — ohne Browser-Vollbild (keine Nutzergeste da).
-     *  Das Brett ist beim ersten Tick oft noch nicht im DOM, deshalb wird bis zu 15 s lang bei
-     *  jedem UI-Tick erneut versucht; danach gilt der Wunsch als verfallen. */
-    function maybeRestoreZen() {
-      let wanted = false;
-      try { wanted = sessionStorage.getItem(ZEN_RESTORE_KEY) === '1'; } catch (e) { return; }
-      if (!wanted || zenActive()) return;
-      if (!zenRestoreDeadline) zenRestoreDeadline = Date.now() + 15000;
-      const drop = () => { try { sessionStorage.removeItem(ZEN_RESTORE_KEY); } catch (e) {} };
-      if (Date.now() > zenRestoreDeadline) { drop(); return; }
-      if (!zenTarget()) return;                 // Brett noch nicht da → nächster Tick
-      drop();
-      enterZen(zenBtnRef, true);
-    }
 
     function exitZen() {
       const bd = document.getElementById(ZEN_BACKDROP_ID);
@@ -2943,6 +2921,19 @@
       return best;
     }
 
+    /** Panel-Breite — BEWUSST unabhängig von der Brettgröße. Sie aus dem Brett-Rect zu rechnen
+     *  ging beim automatischen Öffnen schief: da hat Chessable das Brett noch nicht neu
+     *  gelayoutet, das Rect ist veraltet, das Panel wurde zu breit und lag über dem Brett
+     *  (erst Zu- und Wieder-Aufklappen sah richtig aus). */
+    function zenPanelWidth() {
+      return Math.round(Math.min(460, Math.max(280, window.innerWidth * 0.24)));
+    }
+
+    /** Platz, den das offene Panel rechts belegt (inkl. Abstand) — 0, wenn es zu ist. */
+    function zenReservedRight() {
+      return zenPanelEl ? zenPanelWidth() + 24 : 0;
+    }
+
     function zenPanelShow(btn, silent) {
       const panel = zenPanelTarget();
       // Beim AUTOMATISCHEN Öffnen (Zen-Start) nicht meckern: findet die Heuristik kein
@@ -2950,11 +2941,7 @@
       if (!panel) { if (!silent) flash(btn, 'Kein Panel gefunden', '#c62828'); return; }
       zenPanelEl = panel;
       zenPanelPrevStyle = panel.getAttribute('style') || '';
-      // Rechts neben dem zentrierten Brett andocken; Breite = rechter
-      // Randstreifen (280–460px), notfalls leicht übers Brett (z-Index höher).
-      const boardRect = zenBoard ? zenBoard.getBoundingClientRect() : null;
-      const gutter = boardRect ? window.innerWidth - boardRect.right - 24 : 380;
-      const w = Math.round(Math.min(460, Math.max(280, gutter)));
+      const w = zenPanelWidth();
       const s = panel.style;
       s.setProperty('position', 'fixed', 'important');
       s.setProperty('top', '50%', 'important');
@@ -2976,6 +2963,7 @@
         const lightText = m && (+m[1] + +m[2] + +m[3]) / 3 > 128;
         s.setProperty('background', lightText ? '#1e1e1e' : '#fafafa', 'important');
       }
+      if (zenRescale) zenRescale();   // Brett auf den verbleibenden Platz rücken
     }
 
     function zenPanelHide() {
@@ -2983,6 +2971,7 @@
       if (zenPanelPrevStyle) zenPanelEl.setAttribute('style', zenPanelPrevStyle);
       else zenPanelEl.removeAttribute('style');
       zenPanelEl = null;
+      if (zenRescale) zenRescale();   // Brett bekommt den Platz zurück
     }
 
     function toggleZenPanel(btn) {
@@ -2997,14 +2986,8 @@
 
     function updateZenButton() {
       if (zenBtnRef) {
-        // Drei Zustände: kein Zen → ⛶ (rein); Zen OHNE Browser-Vollbild (nach Refresh
-        // wiederhergestellt) → ⛶ „fortsetzen" (ein Klick holt das echte Vollbild); Zen MIT
-        // Vollbild → ✕ (raus). Ohne den mittleren Zustand käme man aus dem wiederhergestellten
-        // Aufbau nicht mehr ins Vollbild, ohne ihn erst zu verlassen.
-        const halbesVollbild = zenWithoutBrowserFullscreen();
-        zenBtnRef.textContent = (zenActive() && !halbesVollbild) ? '✕' : '⛶';
-        zenBtnRef.title = !zenActive() ? 'Brett bildschirmfüllend (Esc beendet)'
-          : halbesVollbild ? 'Vollbild fortsetzen' : 'Vollbild verlassen (Esc)';
+      zenBtnRef.textContent = zenActive() ? '✕' : '⛶';
+      zenBtnRef.title = zenActive() ? 'Vollbild verlassen (Esc)' : 'Brett bildschirmfüllend (Esc beendet)';
       }
       // Im Zen-Modus bleiben Exit, Refresh und die Zen-Extras (▸/💬) sichtbar;
       // beim Verlassen wieder die normalen zeigen, Zen-Extras verstecken.
@@ -3087,8 +3070,6 @@
       refreshBtn.title = 'Seite neu laden';
       styleButton(refreshBtn, '#616161');
       refreshBtn.addEventListener('click', () => {
-        // Zen-Wunsch über den Reload retten (siehe ZEN_RESTORE_KEY).
-        try { if (zenActive()) sessionStorage.setItem(ZEN_RESTORE_KEY, '1'); } catch (e) { /* Privatmodus */ }
         // Chessable hängt im Training einen beforeunload-Handler ein („Seite verlassen?") — beim
         // bewusst geklickten Refresh ist der Dialog nur Reibung. Einmalig in der Capture-Phase
         // abfangen, bevor Chessables Handler dran ist (gleich wie in chessable-fen.js).
@@ -3109,13 +3090,7 @@
       fullscreenBtn.title = 'Brett bildschirmfüllend (Esc beendet)';
       styleButton(fullscreenBtn, '#37474f');
       Object.assign(fullscreenBtn.style, { fontSize: '15px', lineHeight: '1', padding: '8px 10px' });
-      fullscreenBtn.addEventListener('click', () => {
-      if (!zenActive()) { enterZen(fullscreenBtn); return; }
-      // Wiederhergestellter Zen-Aufbau ohne Browser-Vollbild: der Klick vervollständigt ihn
-      // (jetzt liegt eine Nutzer-Interaktion vor), statt alles zu verlassen.
-      if (zenWithoutBrowserFullscreen()) { requestBrowserFullscreen(); return; }
-      exitZen();
-    });
+      fullscreenBtn.addEventListener('click', () => { zenActive() ? exitZen() : enterZen(fullscreenBtn); });
       zenBtnRef = fullscreenBtn;
       zenRefreshBtnRef = refreshBtn;
 
@@ -3205,7 +3180,6 @@
       createUi();
       initFeedbackTracker();   // Zug-Rueckmeldung mitschneiden (Overstudied / +XP)
       attachLineResetListener();
-      maybeRestoreZen();   // Zen-Aufbau nach einem Refresh zurückholen (ohne Browser-Vollbild)
     }
 
     if (document.body) ensureUi();
@@ -3215,7 +3189,7 @@
     const mo = new MutationObserver(() => {
       if (!isPracticeMode()) { removeUi(); return; }
       if (!document.getElementById(CONTAINER_ID)) ensureUi();
-      else { initFeedbackTracker(); maybeRestoreZen(); }   // Notification-Knoten wird bei SPA-Wechseln ersetzt   // UI steht schon, Brett kommt bei Chessable oft später nach
+      else initFeedbackTracker();   // Notification-Knoten wird bei SPA-Wechseln ersetzt   // UI steht schon, Brett kommt bei Chessable oft später nach
     });
     mo.observe(document.documentElement, { childList: true, subtree: true });
   }
