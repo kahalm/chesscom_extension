@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RepCheck — Opening Repertoire Deviation Checker
 // @namespace    https://github.com/kahalm/repcheck
-// @version      1.38.1
+// @version      1.38.2
 // @require      https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js
 // @description  Shows where your game deviates from your opening repertoire (chess.com + lichess, PGN files or RookHub). On chessable.com: copy/search FEN, remember a line to RookHub, show earned XP, report active training time to RookHub, read the API token.
 // @author       kahalm
@@ -2728,6 +2728,10 @@
         if (target !== zenApplied) { zenApplied = target; zenPokeLayout(); }
       };
       zenRescale();
+      // Kommentare/Züge standardmäßig AN: im Vollbild ist der freie Platz daneben sonst
+      // ungenutzt, und genau diese Spalte will man beim Durcharbeiten sehen. 💬 schaltet sie
+      // wieder aus. Nach zenRescale, damit die Brettbreite für die Spaltenbreite schon steht.
+      zenPanelShow(null, true);
       window.addEventListener('resize', zenRescale);
       if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(() => {});
       updateZenButton();
@@ -2784,9 +2788,11 @@
       return best;
     }
 
-    function zenPanelShow(btn) {
+    function zenPanelShow(btn, silent) {
       const panel = zenPanelTarget();
-      if (!panel) { flash(btn, 'Kein Panel gefunden', '#c62828'); return; }
+      // Beim AUTOMATISCHEN Öffnen (Zen-Start) nicht meckern: findet die Heuristik kein
+      // Panel, soll der Nutzer einfach kein Panel sehen — keine Fehlermeldung am Knopf.
+      if (!panel) { if (!silent) flash(btn, 'Kein Panel gefunden', '#c62828'); return; }
       zenPanelEl = panel;
       zenPanelPrevStyle = panel.getAttribute('style') || '';
       // Rechts neben dem zentrierten Brett andocken; Breite = rechter

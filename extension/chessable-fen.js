@@ -475,6 +475,10 @@
       if (target !== zenApplied) { zenApplied = target; zenPokeLayout(); }
     };
     zenRescale();
+    // Kommentare/Züge standardmäßig AN: im Vollbild ist der freie Platz daneben sonst
+    // ungenutzt, und genau diese Spalte will man beim Durcharbeiten sehen. 💬 schaltet sie
+    // wieder aus. Nach zenRescale, damit die Brettbreite für die Spaltenbreite schon steht.
+    zenPanelShow(null, true);
     window.addEventListener('resize', zenRescale);
 
     if (document.documentElement.requestFullscreen) {
@@ -535,9 +539,11 @@
     return best;
   }
 
-  function zenPanelShow(btn) {
+  function zenPanelShow(btn, silent) {
     const panel = zenPanelTarget();
-    if (!panel) { flash(btn, 'Kein Panel gefunden', '#c62828'); return; }
+    // Beim AUTOMATISCHEN Öffnen (Zen-Start) nicht meckern: findet die Heuristik kein
+    // Panel, soll der Nutzer einfach kein Panel sehen — keine Fehlermeldung am Knopf.
+    if (!panel) { if (!silent) flash(btn, 'Kein Panel gefunden', '#c62828'); return; }
     zenPanelEl = panel;
     zenPanelPrevStyle = panel.getAttribute('style') || '';
     // Rechts neben dem zentrierten Brett andocken; Breite = rechter
