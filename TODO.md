@@ -105,6 +105,15 @@ Was noch manuell erledigt werden muss, bevor die Extension öffentlich veröffen
   Offen zu entscheiden: ob dieser Zwischenzustand gewünscht ist oder verwirrt (Knopf zeigt dann
   „⛶", obwohl es schon fast wie Vollbild aussieht).
 
+- [ ] **Gesamt-XP am Linienende aufklappbar machen** (User-Wunsch 2026-08-08)
+  Am Ende einer Linie zeigt Chessable die Gesamt-XP (in beiden Modi). Diese Summe soll klickbar
+  sein und die **Einzelbeträge** zeigen, aus denen sie sich zusammensetzt. Hängt direkt am
+  Zug-Feedback oben: wenn RepCheck die Pro-Zug-Meldungen ohnehin mitschneidet, ist die
+  Aufschlüsselung nur noch eine Anzeige der gesammelten Liste (kein zusätzlicher Datenzugriff).
+  Offen: ob die Summe von Chessable exakt der Summe der Einzelmeldungen entspricht (Rundung,
+  Boni am Linienende) — sonst muss die Aufschlüsselung als „erfasste Einzelbeträge" beschriftet
+  werden statt als Zerlegung der Summe. Erfasst wird das mit Inspector v0.2.0 (`xpAnzeigen`).
+
 - [ ] **Restliche Linien im Trainingspool anzeigen**
   Irgendwo sichtbar machen, wieviele Linien im aktuellen Trainingspool noch offen sind.
   Datenquelle klären: Chessables eigene Fortschrittsanzeige (DOM) oder der bereits vorhandene
