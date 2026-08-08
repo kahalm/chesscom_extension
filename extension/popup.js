@@ -6,6 +6,84 @@ const STATUS_EL = document.getElementById('status');
 const ERROR_EL = document.getElementById('error-hint');
 const REP_EL = document.getElementById('repertoires');
 
+// ─── Sprache ───────────────────────────────────────────────────────────
+// Alle sichtbaren Texte kommen aus der geteilten Tabelle lib/i18n.js (self.RepCheckI18n,
+// wird in popup.html VOR dieser Datei geladen). `rcLang` ist die aktive Sprache,
+// `rcLangStored` die ausdrückliche Wahl des Nutzers ('' = automatisch nach Browsersprache).
+let rcLang = self.RepCheckI18n.resolveLang(null, navigator.languages);
+let rcLangStored = '';
+function t(key, params) { return self.RepCheckI18n.translate(rcLang, key, params); }
+
+// Die Sprachnamen im Auswahlfeld bleiben in ihrer eigenen Sprache (Konvention, kein Schlüssel).
+const LANG_NAMES = { en: 'English', de: 'Deutsch', hr: 'Hrvatski' };
+const LANG_SELECT = document.getElementById('lang-select');
+
+// Statische Beschriftungen aus dem HTML (data-i18n / -title / -placeholder) neu setzen.
+function applyI18n(root) {
+  const scope = root || document;
+  scope.querySelectorAll('[data-i18n]').forEach((el) => {
+    el.textContent = t(el.getAttribute('data-i18n'));
+  });
+  scope.querySelectorAll('[data-i18n-title]').forEach((el) => {
+    el.title = t(el.getAttribute('data-i18n-title'));
+  });
+  scope.querySelectorAll('[data-i18n-placeholder]').forEach((el) => {
+    el.placeholder = t(el.getAttribute('data-i18n-placeholder'));
+  });
+  document.documentElement.lang = rcLang;
+  if (LANG_SELECT) {
+    const auto = self.RepCheckI18n.resolveLang(null, navigator.languages);
+    const autoOpt = LANG_SELECT.querySelector('option[value=""]');
+    if (autoOpt) autoOpt.textContent = t('lang.auto', { lang: LANG_NAMES[auto] || auto });
+    LANG_SELECT.value = rcLangStored;
+  }
+}
+
+// Beschriftet das ganze Popup neu — statisches Gerüst plus die zur Laufzeit gesetzten Texte,
+// die dafür ihren letzten Zustand (Schlüssel + Parameter) merken statt fertiger Strings.
+function repaintAll() {
+  applyI18n(document);
+  paintStatus();
+  renderRepertoireList(repItems);
+  paintShareState();
+  paintChessableState();
+  // ciRender(null) hieße „Content-Script nicht bereit" — nur neu zeichnen, wenn das
+  // Import-Panel überhaupt an einem Chessable-Tab hängt.
+  if (ciTabId != null) ciRender(lastCiState);
+}
+
+applyI18n(document);
+
+if (chrome.storage && chrome.storage.local) {
+  chrome.storage.local.get(['rcLang'], (r) => {
+    rcLangStored = (r && r.rcLang) || '';
+    rcLang = self.RepCheckI18n.resolveLang(rcLangStored, navigator.languages);
+    repaintAll();
+  });
+  chrome.storage.onChanged.addListener((ch, area) => {
+    if (area === 'local' && ch.rcLang) {
+      rcLangStored = ch.rcLang.newValue || '';
+      rcLang = self.RepCheckI18n.resolveLang(rcLangStored, navigator.languages);
+      repaintAll();
+    }
+  });
+}
+
+if (LANG_SELECT) {
+  LANG_SELECT.addEventListener('change', () => {
+    const v = LANG_SELECT.value;
+    rcLangStored = v;
+    rcLang = self.RepCheckI18n.resolveLang(v, navigator.languages);
+    try {
+      // Leerer Wert = „automatisch": Schlüssel löschen statt '' zu speichern, sonst würde
+      // resolveLang zwar auch fallen, aber der Speicher trüge einen Wert ohne Bedeutung.
+      if (v) chrome.storage.local.set({ rcLang: v });
+      else chrome.storage.local.remove('rcLang');
+    } catch (e) {}
+    repaintAll();
+  });
+}
+
 document.getElementById('open-chesscom').addEventListener('click', () => {
   chrome.tabs.create({ url: 'https://www.chess.com/' });
 });
@@ -97,31 +175,35 @@ function fetchRookhubRepertoires(cfg) {
       expect: 'json',
     }, (resp) => {
       if (chrome.runtime.lastError) { reject(new Error(chrome.runtime.lastError.message)); return; }
-      if (!resp) { reject(new Error('keine Antwort vom Background-Worker')); return; }
-      if (resp.status === 401) { reject(new Error('Token ungültig oder abgelaufen.')); return; }
-      if (!resp.ok) { reject(new Error(resp.error || ('HTTP ' + resp.status))); return; }
+      if (!resp) { reject(new Error(t('err.noBackground'))); return; }
+      if (resp.status === 401) { reject(new Error(t('err.tokenInvalid'))); return; }
+      if (!resp.ok) { reject(new Error(resp.error || t('err.http', { status: resp.status }))); return; }
       resolve(Array.isArray(resp.body) ? resp.body : []);
     });
   });
 }
 
+// Zuletzt gezeigte Liste — für das Neubeschriften nach einem Sprachwechsel.
+let repItems = null;
+
 function renderRepertoireList(items) {
+  repItems = (items && items.length) ? items : null;
   if (!items || items.length === 0) {
     REP_EL.style.display = 'none';
     return;
   }
   const heading = document.createElement('div');
   heading.className = 'heading';
-  heading.textContent = `Repertoires (${items.length})`;
+  heading.textContent = t('popup.rep.heading', { count: items.length });
   const ul = document.createElement('ul');
   for (const it of items) {
     const li = document.createElement('li');
     const name = document.createElement('span');
-    name.textContent = it.name || '(unbenannt)';
+    name.textContent = it.name || t('popup.rep.unnamed');
     const count = document.createElement('span');
     count.className = 'count';
     if (typeof it.fileCount === 'number') {
-      count.textContent = it.fileCount + ' PGN' + (it.fileCount === 1 ? '' : 's');
+      count.textContent = t('popup.rep.files', { count: it.fileCount });
     }
     li.appendChild(name);
     li.appendChild(count);
@@ -147,6 +229,18 @@ function readRookhubConfigFromStorage() {
   });
 }
 
+// Statuszeile: Schlüssel + Parameter merken (nicht den fertigen Text), damit ein
+// Sprachwechsel dieselbe Aussage ohne erneuten Netz-Roundtrip neu beschriften kann.
+let statusPaint = { cls: 'status', key: 'popup.status.loading', params: null };
+function setStatus(cls, key, params) {
+  statusPaint = { cls, key, params: params || null };
+  paintStatus();
+}
+function paintStatus() {
+  STATUS_EL.className = statusPaint.cls;
+  STATUS_EL.textContent = t(statusPaint.key, statusPaint.params);
+}
+
 async function refreshStatus() {
   let store;
   try {
@@ -159,34 +253,28 @@ async function refreshStatus() {
   const { cache } = store;
 
   if (config && config.url && config.token) {
-    STATUS_EL.className = 'status';
-    STATUS_EL.textContent = 'RookHub: lade Repertoires…';
+    setStatus('status', 'popup.rookhub.loading');
     try {
       const items = await fetchRookhubRepertoires(config);
       if (items.length > 0) {
-        STATUS_EL.className = 'status loaded';
-        STATUS_EL.textContent = `RookHub verbunden · ${items.length} Repertoire${items.length === 1 ? '' : 's'}`;
+        setStatus('status loaded', 'popup.rookhub.connected', { count: items.length });
         renderRepertoireList(items);
       } else {
-        STATUS_EL.className = 'status empty';
-        STATUS_EL.textContent = 'RookHub verbunden · keine Opening-Repertoires';
+        setStatus('status empty', 'popup.rookhub.noOpenings');
       }
     } catch (e) {
-      STATUS_EL.className = 'status error';
-      STATUS_EL.textContent = 'RookHub: ' + e.message;
+      setStatus('status error', 'popup.rookhub.error', { error: e.message });
     }
     return;
   }
 
   if (cache && cache.count > 0) {
     const ago = Math.round((Date.now() - (cache.savedAt || 0)) / 60000);
-    STATUS_EL.className = 'status loaded';
-    STATUS_EL.textContent = `Lokal: ${cache.count} Eröffnungen geladen (vor ${ago} min)`;
+    setStatus('status loaded', 'popup.local.loaded', { count: cache.count, min: ago });
     return;
   }
 
-  STATUS_EL.className = 'status empty';
-  STATUS_EL.textContent = 'Noch kein Repertoire geladen';
+  setStatus('status empty', 'popup.none');
 }
 
 refreshStatus();
@@ -199,6 +287,15 @@ const CHESSABLE_BOX = document.getElementById('chessable-box');
 const COPY_CHESSABLE = document.getElementById('copy-chessable');
 const CHESSABLE_STATE = document.getElementById('chessable-state');
 
+let chessablePaint = null;
+function setChessableState(key, params) {
+  chessablePaint = { key, params: params || null };
+  paintChessableState();
+}
+function paintChessableState() {
+  if (chessablePaint) CHESSABLE_STATE.textContent = t(chessablePaint.key, chessablePaint.params);
+}
+
 function refreshChessableToken() {
   if (!chrome.storage || !chrome.storage.local) return;
   chrome.storage.local.get('chessableToken', (res) => {
@@ -210,7 +307,8 @@ function refreshChessableToken() {
     CHESSABLE_BOX.style.display = 'block';
     COPY_CHESSABLE.disabled = false;
     const ago = Math.round((Date.now() - (entry.capturedAt || 0)) / 60000);
-    CHESSABLE_STATE.textContent = ago <= 0 ? 'gerade erfasst' : `vor ${ago} min erfasst`;
+    if (ago <= 0) setChessableState('popup.chessable.justCaptured');
+    else setChessableState('popup.chessable.capturedAgo', { min: ago });
   });
 }
 
@@ -220,9 +318,9 @@ COPY_CHESSABLE.addEventListener('click', () => {
     if (!entry || !entry.token) return;
     try {
       await navigator.clipboard.writeText(entry.token);
-      CHESSABLE_STATE.textContent = 'kopiert ✓';
+      setChessableState('popup.copied');
     } catch (e) {
-      CHESSABLE_STATE.textContent = 'Kopieren fehlgeschlagen';
+      setChessableState('popup.copyFailed');
     }
   });
 });
@@ -249,6 +347,15 @@ const SHARE_URL = document.getElementById('share-url');
 const COPY_SHARE = document.getElementById('copy-share');
 const SHARE_STATE = document.getElementById('share-state');
 
+let sharePaint = null;
+function setShareState(key, params) {
+  sharePaint = { key, params: params || null };
+  paintShareState();
+}
+function paintShareState() {
+  if (sharePaint) SHARE_STATE.textContent = t(sharePaint.key, sharePaint.params);
+}
+
 async function ensureContentLoaded(tab) {
   const [precheck] = await chrome.scripting.executeScript({
     target: { tabId: tab.id },
@@ -257,7 +364,7 @@ async function ensureContentLoaded(tab) {
   if (!precheck || !precheck.result) {
     await chrome.scripting.executeScript({
       target: { tabId: tab.id },
-      files: ['chess.min.js', 'lib/repertoire-text.js', 'content.js'],
+      files: ['chess.min.js', 'lib/repertoire-text.js', 'lib/i18n.js', 'content.js'],
     });
   }
 }
@@ -290,9 +397,9 @@ function postShareLine(cfg, moves, title) {
       expect: 'json',
     }, (resp) => {
       if (chrome.runtime.lastError) { reject(new Error(chrome.runtime.lastError.message)); return; }
-      if (!resp) { reject(new Error('keine Antwort vom Background-Worker')); return; }
-      if (resp.status === 401) { reject(new Error('Token ungültig oder abgelaufen.')); return; }
-      if (!resp.ok) { reject(new Error(resp.error || ('HTTP ' + resp.status))); return; }
+      if (!resp) { reject(new Error(t('err.noBackground'))); return; }
+      if (resp.status === 401) { reject(new Error(t('err.tokenInvalid'))); return; }
+      if (!resp.ok) { reject(new Error(resp.error || t('err.http', { status: resp.status }))); return; }
       resolve(resp.body);
     });
   });
@@ -304,25 +411,24 @@ async function initShareBar() {
   const tab = await getActiveTab();
   if (!tab || !tab.url || !/^https:\/\/(www\.chess\.com|lichess\.org)\//.test(tab.url)) return;
   SHAREBAR.style.display = 'block';
-  SHARE_STATE.textContent = 'lade…';
+  setShareState('popup.share.loading');
   COPY_SHARE.disabled = true;
   try {
     const line = await getCurrentLineFromTab(tab);
     if (!line.moves || !line.moves.length) {
       SHARE_URL.value = '';
-      SHARE_STATE.textContent = 'Keine Zugfolge auf dieser Seite.';
+      setShareState('popup.share.noMoves');
       return;
     }
     const res = await postShareLine(cfg, line.moves, line.title);
     const token = res && (res.shareToken || res.ShareToken);
-    if (!token) throw new Error('kein Token in der Antwort');
+    if (!token) throw new Error(t('err.noToken'));
     SHARE_URL.value = (cfg.url || '').replace(/\/$/, '') + '/l/' + token;
     COPY_SHARE.disabled = false;
-    const n = line.moves.length;
-    SHARE_STATE.textContent = `${n} Halbzug${n === 1 ? '' : 'e'} · klick „Kopieren"`;
+    setShareState('popup.share.ready', { count: line.moves.length });
   } catch (e) {
     SHARE_URL.value = '';
-    SHARE_STATE.textContent = 'Link fehlgeschlagen: ' + (e && e.message ? e.message : String(e));
+    setShareState('popup.share.failed', { error: (e && e.message ? e.message : String(e)) });
   }
 }
 
@@ -334,7 +440,7 @@ COPY_SHARE.addEventListener('click', async () => {
     SHARE_URL.select();
     document.execCommand('copy');
   }
-  SHARE_STATE.textContent = 'kopiert ✓';
+  setShareState('popup.copied');
 });
 
 initShareBar();
@@ -355,9 +461,9 @@ let ciTabId = null, ciPoll = null, ciTargetInit = false;
 // Mitlaufender Timer im Status („… · 1:23"): Basistext + Crawl-Startzeit getrennt halten,
 // damit ein 1-s-Ticker die verstrichene Zeit unabhängig vom 1,5-s-State-Poll aktualisiert.
 let ciStatusBase = '', ciStartedAt = null, ciTimerInt = null;
-// „Kurs holen"-Button wird während des Laufs zum Abbrechen-Knopf; Default-Label einmal merken.
-const CI_CRAWL_LABEL = CI_CRAWL ? CI_CRAWL.textContent : '';
 let ciCrawling = false;
+// Letzter vom Content-Script gemeldeter Zustand — für das Neuzeichnen nach Sprachwechsel.
+let lastCiState = null;
 
 function ciElapsedLabel(ms) {
   const s = Math.max(0, Math.floor((Date.now() - ms) / 1000));
@@ -387,21 +493,23 @@ function ciSend(action, extra) {
 }
 
 function ciRender(st) {
+  lastCiState = st;
   if (!st) {
-    CI_COURSE.textContent = 'Content-Script nicht bereit — Seite neu laden.';
+    CI_COURSE.textContent = t('import.notReady');
     CI_CRAWL.disabled = true;
     return;
   }
   CI_COURSE.textContent = st.onCourse
-    ? (st.courseName ? ('Kurs: ' + st.courseName) : ('Kurs-ID ' + st.bid))
-    : 'Öffne einen Chessable-Kurs.';
+    ? (st.courseName ? t('import.course', { name: st.courseName }) : t('import.courseId', { id: st.bid }))
+    : t('import.openCourse');
   ciCrawling = !!st.crawling;
   if (ciCrawling) {
-    CI_CRAWL.textContent = 'Abbrechen';
+    // „Kurs holen"-Button wird während des Laufs zum Abbrechen-Knopf.
+    CI_CRAWL.textContent = t('import.cancel');
     CI_CRAWL.classList.add('ci-cancel');
     CI_CRAWL.disabled = false;
   } else {
-    CI_CRAWL.textContent = CI_CRAWL_LABEL;
+    CI_CRAWL.textContent = t('import.crawl');
     CI_CRAWL.classList.remove('ci-cancel');
     CI_CRAWL.disabled = !st.onCourse;
   }
@@ -413,14 +521,16 @@ function ciRender(st) {
   }
   if (st.captured > 0) {
     CI_IMPORTCAP.style.display = 'block';
-    CI_IMPORTCAP.textContent = `Mitschnitt importieren (${st.captured} Linien)`;
+    CI_IMPORTCAP.textContent = t('import.captured', { count: st.captured });
   } else {
     CI_IMPORTCAP.style.display = 'none';
   }
   if (document.activeElement !== CI_LIVE) CI_LIVE.checked = !!st.autoImport;
   if (st.progress) {
     const p = st.progress;
-    CI_PROGRESS.innerHTML = `<b>Auf RookHub: ${p.done}/${p.total} Linien (${p.pct}%)</b>`;
+    const b = document.createElement('b');
+    b.textContent = t('import.onRookhub', { done: p.done, total: p.total, pct: p.pct });
+    CI_PROGRESS.replaceChildren(b);
   } else {
     CI_PROGRESS.textContent = '';
   }
@@ -459,20 +569,18 @@ async function initChessableImport() {
     }
     // Bannrisiko: der aktive Crawl klappert die Chessable-API automatisiert ab → explizite Bestätigung.
     const ok = window.confirm(
-      'Bannrisiko\n\n' +
-      '„Kurs holen" ruft die Chessable-API automatisiert im Schnelldurchlauf ab. ' +
-      'Das kann gegen Chessables Nutzungsbedingungen verstoßen und im schlimmsten Fall ' +
-      'zur Sperrung deines Kontos führen.\n\n' +
-      'Nutze es nur für eigene Kurse und auf eigenes Risiko.\n\n' +
-      'Wirklich fortfahren?'
+      t('import.warn.title') + '\n\n' +
+      t('import.warn.body') + '\n\n' +
+      t('import.warn.own') + '\n\n' +
+      t('import.warn.confirm')
     );
     if (!ok) return;
-    CI_STATUS.textContent = 'Starte …';
+    CI_STATUS.textContent = t('import.starting');
     await ciSend('crawl', { target: ciSelectedTarget() });
     ciTick();
   });
   CI_IMPORTCAP.addEventListener('click', async () => {
-    CI_STATUS.textContent = 'Importiere …';
+    CI_STATUS.textContent = t('import.importing');
     await ciSend('importCaptured', { target: ciSelectedTarget() });
     ciTick();
   });
@@ -492,7 +600,7 @@ initChessableImport();
 async function triggerInTab(action) {
   const tab = await getActiveTab();
   if (!tab || !tab.url || !/^https:\/\/(www\.chess\.com|lichess\.org)\//.test(tab.url)) {
-    showError('Bitte zuerst chess.com oder lichess.org im aktiven Tab oeffnen.');
+    showError(t('popup.needTab'));
     return;
   }
   try {
@@ -505,7 +613,7 @@ async function triggerInTab(action) {
       // 2) Lazy-Inject chess.min.js + Shared-Core (RepCheckLib) + content.js (einmalig pro Tab).
       await chrome.scripting.executeScript({
         target: { tabId: tab.id },
-        files: ['chess.min.js', 'lib/repertoire-text.js', 'content.js'],
+        files: ['chess.min.js', 'lib/repertoire-text.js', 'lib/i18n.js', 'content.js'],
       });
     }
     // 3) Aktion ausloesen.
@@ -523,6 +631,6 @@ async function triggerInTab(action) {
     });
     window.close();
   } catch (e) {
-    showError('Fehler: ' + (e && e.message ? e.message : String(e)));
+    showError(t('popup.error', { error: (e && e.message ? e.message : String(e)) }));
   }
 }

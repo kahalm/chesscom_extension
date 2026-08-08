@@ -160,8 +160,30 @@ Wiederkehrend (kein einmaliges TODO):
 - [ ] **Code-Sync-Script** zwischen `repcheck.user.js` (Userscript) und `extension/content.js` (Extension)
   Aktuell pflegen wir beide getrennt. Klein und überschaubar, aber bei der nächsten größeren Feature-Änderung leicht zu vergessen. Ein Build-Script, das nur die `rookhub*Fetch*`-Funktionen austauscht, würde Konsistenz garantieren.
 
-- [ ] **i18n** für die Extension-Settings-UI
-  Aktuell alles auf Deutsch (matches RookHub-Stand). Englisch + Croatian parallel würden mit der RookHub-i18n-Linie konsistent sein.
+- [x] **i18n für die Einstellungs-UI** — ERLEDIGT v1.42.0 (en/de/hr, Sprachwahl im Popup UND im
+  In-Page-Panel; `extension/lib/i18n.js` ist die einzige Quelle und wird per Build ins Userscript
+  gespiegelt). Umgestellt sind Popup, In-Page-Panel (beide Distributionen), Prüf-Ergebnis,
+  Knopf-Tooltips auf chess.com/lichess und der komplette Chessable-Browser-Import.
+  Vorgefunden war übrigens KEIN reines Deutsch, sondern ein Mischmasch — „Repertoire Settings",
+  „Select PGN Folder", „Close" standen englisch neben „Verbinden" und „RookHub: verbinde…".
+
+- [ ] **i18n Teil 2: die On-Page-Knopfleiste auf chessable.com** (bewusst nicht in v1.42.0)
+  `extension/chessable-fen.js` + sein Spiegel in `repcheck.user.js` (~26 Texte: Knopf-Tooltips,
+  `flash()`-Kurzmeldungen, das Zug-Rückmeldungs-Panel). Steckt in der MAIN-World, hat also weder
+  `chrome.*` noch Zugriff auf die Sprachwahl. Der Weg ist klar und die Bausteine liegen:
+  `lib/i18n.js` ist reine Logik ohne `chrome.*` und lässt sich als viertes MAIN-World-Script VOR
+  `chessable-fen.js` laden; der Sprachcode kommt über die schon vorhandene postMessage-Brücke
+  (Muster `chessable-buttons` in chessable-activity.js). Nur die zwei Buchstaben wandern, nicht
+  die Tabelle.
+  Zu beachten: der in Badge/Tooltip gespiegelte Chessable-Text („Overstudied", „+12 XP") bleibt
+  in der KONTOsprache — der Code spiegelt bewusst statt zu interpretieren. Der übersetzte Satz
+  drumherum muss das aushalten.
+
+- [ ] **Store-Metadaten übersetzen** (`_locales/{en,de,hr}/messages.json` + `default_locale`)
+  Betrifft nur `name`, `description` und `action.default_title` im Manifest — die drei Felder
+  erreicht ein Laufzeitmodul prinzipiell nicht. Bewusst NICHT zusammen mit v1.42.0 gemacht: ist
+  die `_locales`-Datei fehlerhaft, lädt die Extension gar nicht mehr („Invalid value for 'name'"),
+  und v1.41.x liegt gerade im Store-Review. Getrennt und mit Smoke-Test in beiden Browsern.
 
 ## Erledigt ✓
 

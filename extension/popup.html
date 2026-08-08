@@ -30,56 +30,68 @@
 <body>
 <h1>♟ RepCheck</h1>
 <div id="sharebar" class="repertoires" style="display:none;margin-top:0;">
-  <div class="heading">Link zur aktuellen Line</div>
+  <div class="heading" data-i18n="popup.share.heading">Link zur aktuellen Line</div>
   <div class="row" style="margin:4px 0 0 0;align-items:center;">
     <input id="share-url" readonly style="flex:1;min-width:0;font-size:11px;padding:5px 6px;border:1px solid #ccc;border-radius:4px;background:#fff;color:#222;" />
-    <button id="copy-share" class="secondary" style="flex:0 0 auto;">Kopieren</button>
+    <button id="copy-share" class="secondary" style="flex:0 0 auto;" data-i18n="popup.share.copy">Kopieren</button>
   </div>
   <span id="share-state" style="font-size:11px;color:#7a8a9a;display:block;margin-top:4px;"></span>
 </div>
-<div id="status" class="status">Lade Status…</div>
+<div id="status" class="status" data-i18n="popup.status.loading">Lade Status…</div>
 <div id="repertoires" class="repertoires" style="display:none;"></div>
 <div class="row">
-  <button id="run-check" class="primary">Prüfen</button>
-  <button id="open-settings" class="secondary">Einstellungen</button>
+  <button id="run-check" class="primary" data-i18n="popup.check">Prüfen</button>
+  <button id="open-settings" class="secondary" data-i18n="popup.settings">Einstellungen</button>
 </div>
 <div id="chessable-box" class="repertoires" style="display:none;">
-  <div class="heading">Chessable-Token</div>
+  <div class="heading" data-i18n="popup.chessable.heading">Chessable-Token</div>
   <div class="row" style="margin:4px 0 0 0;align-items:center;">
-    <button id="copy-chessable" class="secondary" disabled>Token kopieren</button>
+    <button id="copy-chessable" class="secondary" disabled data-i18n="popup.chessable.copy">Token kopieren</button>
     <span id="chessable-state" style="font-size:11px;color:#7a8a9a;"></span>
   </div>
 </div>
 <div id="chessable-import" class="repertoires" style="display:none;">
-  <div class="heading">RookHub-Import (Browser)</div>
+  <div class="heading" data-i18n="import.heading">RookHub-Import (Browser)</div>
   <div id="ci-course" style="font-size:11px;color:#7a8a9a;margin-bottom:6px;"></div>
   <div class="row" style="margin:0 0 6px 0;align-items:center;gap:14px;">
-    <label style="font-weight:normal;"><input type="radio" name="ci-target" value="repertoire" checked> Repertoire</label>
-    <label style="font-weight:normal;"><input type="radio" name="ci-target" value="book"> Kurs/Buch</label>
+    <label style="font-weight:normal;"><input type="radio" name="ci-target" value="repertoire" checked> <span data-i18n="import.target.repertoire">Repertoire</span></label>
+    <label style="font-weight:normal;"><input type="radio" name="ci-target" value="book"> <span data-i18n="import.target.book">Kurs/Buch</span></label>
   </div>
-  <button id="ci-crawl" class="primary" style="width:100%;margin-bottom:6px;">⚡ Kurs über meinen Browser holen</button>
-  <button id="ci-importcap" class="secondary" style="width:100%;margin-bottom:6px;display:none;">Mitschnitt importieren</button>
-  <label style="display:block;margin-bottom:6px;font-size:12px;"><input type="checkbox" id="ci-live"> Linien beim Durchklicken live anhängen</label>
+  <button id="ci-crawl" class="primary" style="width:100%;margin-bottom:6px;" data-i18n="import.crawl">⚡ Kurs über meinen Browser holen</button>
+  <button id="ci-importcap" class="secondary" style="width:100%;margin-bottom:6px;display:none;" data-i18n="import.capturedPlain">Mitschnitt importieren</button>
+  <label style="display:block;margin-bottom:6px;font-size:12px;"><input type="checkbox" id="ci-live"> <span data-i18n="import.live">Linien beim Durchklicken live anhängen</span></label>
   <div id="ci-progress" style="font-size:12px;color:#2c3e50;margin-bottom:4px;"></div>
   <div id="ci-status" style="font-size:11px;color:#2a8c4a;min-height:1.1em;"></div>
 </div>
 <div id="chessable-settings" class="repertoires" style="display:none;">
-  <div class="heading">Chessable-Buttons</div>
-  <div style="font-size:11px;color:#7a8a9a;margin-bottom:6px;">Welche Buttons unten rechts auf chessable.com (Practice-Modus) erscheinen.</div>
+  <div class="heading" data-i18n="popup.buttons.heading">Chessable-Buttons</div>
+  <div style="font-size:11px;color:#7a8a9a;margin-bottom:6px;" data-i18n="popup.buttons.intro">Welche Buttons unten rechts auf chessable.com (Practice-Modus) erscheinen.</div>
   <label style="display:block;margin-bottom:3px;"><input type="checkbox" id="cb-copyFen" checked> Copy FEN</label>
   <label style="display:block;margin-bottom:3px;"><input type="checkbox" id="cb-analyse" checked> Analyse (RookHub)</label>
   <label style="display:block;margin-bottom:3px;"><input type="checkbox" id="cb-searchFen" checked> Search FEN</label>
   <label style="display:block;margin-bottom:3px;"><input type="checkbox" id="cb-refresh" checked> Refresh</label>
   <label style="display:block;margin-bottom:3px;"><input type="checkbox" id="cb-remember" checked> Remember line</label>
-  <label style="display:block;margin-bottom:3px;"><input type="checkbox" id="cb-fullscreen" checked> Vollbild</label>
+  <label style="display:block;margin-bottom:3px;"><input type="checkbox" id="cb-fullscreen" checked> <span data-i18n="popup.buttons.fullscreen">Vollbild</span></label>
 </div>
 <div class="hint" id="error-hint" style="display:none;color:#b71c1c;"></div>
 <div class="hint">
   <a href="https://github.com/kahalm/repcheck" target="_blank" rel="noopener">GitHub</a>
   · <a href="https://discord.gg/wczc4BJtMf" target="_blank" rel="noopener">Discord</a>
-  · <button id="open-chesscom" style="padding:2px 6px;font-size:11px;">chess.com</button>
-  · <button id="open-lichess" style="padding:2px 6px;font-size:11px;">lichess.org</button>
+  · <button id="open-chesscom" style="padding:2px 6px;font-size:11px;" data-i18n="popup.open.chesscom">chess.com</button>
+  · <button id="open-lichess" style="padding:2px 6px;font-size:11px;" data-i18n="popup.open.lichess">lichess.org</button>
 </div>
+<div class="hint">
+  <label for="lang-select" data-i18n="lang.label">Sprache</label>
+  <select id="lang-select" style="font-size:11px;margin-left:4px;padding:1px 2px;">
+    <!-- Leerer Wert = automatisch nach Browsersprache; Beschriftung setzt applyI18n (lang.auto).
+         Die Sprachnamen selbst bleiben bewusst in ihrer eigenen Sprache. -->
+    <option value=""></option>
+    <option value="en">English</option>
+    <option value="de">Deutsch</option>
+    <option value="hr">Hrvatski</option>
+  </select>
+</div>
+<script src="lib/i18n.js"></script>
 <script src="popup.js"></script>
 </body>
 </html>

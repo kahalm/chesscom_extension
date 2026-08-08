@@ -93,6 +93,11 @@ const RC_MESSAGES = {
       other: 'Import recorded lines ({count} lines)',
     },
     'import.capturedPlain': 'Import recorded lines',
+    'import.capturedInfo': {
+      one: '{count} line recorded',
+      other: '{count} lines recorded',
+    },
+    'import.capturedNone': 'Nothing recorded yet',
     'import.live': 'Append lines live as you click through the course',
     'import.notReady': 'Content script not ready — reload the page.',
     'import.course': 'Course: {name}',
@@ -170,6 +175,7 @@ const RC_MESSAGES = {
     'status.connecting': 'RookHub: connecting…',
     'status.refreshing': 'RookHub: refreshing…',
     'status.notConfigured': 'RookHub: not configured yet.',
+    'status.error': 'RookHub: {error}',
     'status.connectedNoOpenings': 'RookHub: connected, but no opening repertoires found.',
     'status.connectedFiles': {
       one: 'RookHub: connected ({count} file).',
@@ -178,6 +184,7 @@ const RC_MESSAGES = {
 
     // — Prüf-Ergebnis —
     'check.outOfRep': 'Out of repertoire at move {move} ({color}: {san})',
+    'check.outOfRepWithGaps': 'Out of repertoire at move {move} ({color}: {san}) ({gaps})',
     'check.transpositions': {
       one: '{count} transposition',
       other: '{count} transpositions',
@@ -197,6 +204,10 @@ const RC_MESSAGES = {
     'tools.saveGame': 'Save game to RookHub',
     'tools.saved': 'Game saved',
     'tools.savedWithLink': 'Saved · share link copied',
+
+    // — ✓/○-Marker an Chessables eigener Linienliste —
+    'progress.onRookhub': 'On RookHub',
+    'progress.notOnRookhub': 'Not on RookHub yet',
 
     // — Fehlertexte —
     'err.noBackground': 'no response from the background worker',
@@ -287,6 +298,11 @@ const RC_MESSAGES = {
       other: 'Mitschnitt importieren ({count} Linien)',
     },
     'import.capturedPlain': 'Mitschnitt importieren',
+    'import.capturedInfo': {
+      one: '{count} Linie mitgeschnitten',
+      other: '{count} Linien mitgeschnitten',
+    },
+    'import.capturedNone': 'Noch nichts mitgeschnitten',
     'import.live': 'Linien beim Durchklicken live anhängen',
     'import.notReady': 'Content-Script nicht bereit — Seite neu laden.',
     'import.course': 'Kurs: {name}',
@@ -362,6 +378,7 @@ const RC_MESSAGES = {
     'status.connecting': 'RookHub: verbinde…',
     'status.refreshing': 'RookHub: aktualisiere…',
     'status.notConfigured': 'RookHub: noch nicht konfiguriert.',
+    'status.error': 'RookHub: {error}',
     'status.connectedNoOpenings': 'RookHub: verbunden, aber keine Opening-Repertoires gefunden.',
     'status.connectedFiles': {
       one: 'RookHub: verbunden ({count} Datei).',
@@ -369,6 +386,7 @@ const RC_MESSAGES = {
     },
 
     'check.outOfRep': 'Aus dem Repertoire bei Zug {move} ({color}: {san})',
+    'check.outOfRepWithGaps': 'Aus dem Repertoire bei Zug {move} ({color}: {san}) ({gaps})',
     'check.transpositions': {
       one: '{count} Zugumstellung',
       other: '{count} Zugumstellungen',
@@ -387,6 +405,8 @@ const RC_MESSAGES = {
     'tools.saveGame': 'Partie in RookHub speichern',
     'tools.saved': 'Partie gespeichert',
     'tools.savedWithLink': 'Gespeichert · Teilen-Link kopiert',
+    'progress.onRookhub': 'Auf RookHub',
+    'progress.notOnRookhub': 'Noch nicht auf RookHub',
 
     'err.noBackground': 'keine Antwort vom Background-Worker',
     'err.tokenInvalid': 'Token ungültig oder abgelaufen.',
@@ -475,6 +495,12 @@ const RC_MESSAGES = {
       other: 'Uvezi snimljene linije ({count} linija)',
     },
     'import.capturedPlain': 'Uvezi snimku',
+    'import.capturedInfo': {
+      one: 'snimljena {count} linija',
+      few: 'snimljene {count} linije',
+      other: 'snimljeno {count} linija',
+    },
+    'import.capturedNone': 'Još ništa nije snimljeno',
     'import.live': 'Dodavaj linije uživo tijekom klikanja',
     'import.notReady': 'Content script nije spreman — ponovno učitaj stranicu.',
     'import.course': 'Tečaj: {name}',
@@ -555,6 +581,7 @@ const RC_MESSAGES = {
     'status.connecting': 'RookHub: povezivanje…',
     'status.refreshing': 'RookHub: osvježavanje…',
     'status.notConfigured': 'RookHub: još nije podešen.',
+    'status.error': 'RookHub: {error}',
     'status.connectedNoOpenings': 'RookHub: povezan, ali nije pronađen nijedan repertoar otvaranja.',
     'status.connectedFiles': {
       one: 'RookHub: povezan ({count} datoteka).',
@@ -562,6 +589,7 @@ const RC_MESSAGES = {
       other: 'RookHub: povezan ({count} datoteka).',
     },
     'check.outOfRep': 'Izvan repertoara na potezu {move} ({color}: {san})',
+    'check.outOfRepWithGaps': 'Izvan repertoara na potezu {move} ({color}: {san}) ({gaps})',
     'check.transpositions': {
       one: '{count} transpozicija',
       few: '{count} transpozicije',
@@ -599,6 +627,8 @@ const RC_MESSAGES = {
     'menu.copyChessableToken': '🔑 Kopiraj Chessable token',
     'menu.noChessableToken': 'RepCheck: u localStorageu nije pronađen Chessable token — jesi li prijavljen?',
     'menu.chessableTokenCopied': 'RepCheck: Chessable token kopiran u međuspremnik.',
+    'progress.onRookhub': 'Na RookHubu',
+    'progress.notOnRookhub': 'Još nije na RookHubu',
   },
 };
 

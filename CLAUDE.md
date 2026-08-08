@@ -36,6 +36,33 @@ Wenn du an der übrigen Hauptlogik etwas änderst:
 
 Ein einziger Build-Schritt, der die Userscript-Quelle als Basis nimmt und nur die Fetch-Funktionen patcht, wäre eine Option für die Zukunft — aktuell ist die Diff klein genug, um manuell synchron gehalten zu werden.
 
+## Oberflächensprache (v1.42.0+)
+
+Popup und In-Page-Panel sprechen **en/de/hr**. Einzige Quelle ist `extension/lib/i18n.js`
+(`RC_MESSAGES[lang][key]`); der Build (`npm run build:userscript`) kopiert sie zwischen die
+Sentinel-Marker `>>>REPCHECK-SHARED:i18n` in `repcheck.user.js` — die Region dort ist **generiert
+und wird nicht von Hand editiert**.
+
+- **Sprachwahl**: `chrome.storage.local['rcLang']` (Extension) bzw. `GM_setValue('rcLang')`
+  (Userscript). Fehlt der Wert, entscheidet `navigator.languages`; Fallback ist `en`. Schalter
+  sitzt im Popup UND im In-Page-Panel (das Userscript hat kein Popup — dort ist das Panel die
+  einzige Einstellungsfläche).
+- **Warum nicht `chrome.i18n`/`_locales`**: das folgt der Browser-Sprache und ist zur Laufzeit
+  nicht umschaltbar; RookHub hat aber eine Nutzer-Sprachwahl, und die soll hier genauso gehen.
+  Dazu existiert `chrome.i18n` weder in der MAIN-World (`chessable-fen.js`, dort ist `chrome` das
+  Objekt der SEITE) noch unter Tampermonkey. Eine Tabelle lässt sich in beide Welten laden, eine
+  API nicht. `_locales` bleibt für die drei Manifest-Felder sinnvoll (siehe TODO).
+- **Plural** über `Intl.PluralRules`: Einträge sind `{ one, few, other }`. Kroatisch braucht die
+  `few`-Form (1 linija / 2–4 linije / 5+ linija) — das Ternary-Muster des Bestands
+  (`'Datei' + (n===1?'':'en')`) fällt dort auseinander. Ein Test erzwingt die `few`-Form.
+- **Platzhalter** sind benannt (`{count}`, `{error}`, …), nie konkateniert. Bedingte Teilsätze
+  bekommen einen EIGENEN Schlüssel (`import.doneAppended` vs. `…Skipped`), weil der Zusatz nicht
+  in jeder Sprache am Satzende steht.
+- **Neuer Text?** Schlüssel in `lib/i18n.js` in ALLEN drei Sprachen anlegen → `npm test`
+  (prüft Schlüssel-, Platzhalter- und Plural-Parität) → `npm run build:userscript`.
+- **Noch nicht umgestellt**: die On-Page-Knopfleiste auf chessable.com (`chessable-fen.js`) —
+  siehe TODO.md.
+
 ## Site-Adapter (v1.5.0+)
 
 `repcheck.user.js` und `extension/content.js` haben ein `ADAPTERS`-Objekt mit einem Eintrag pro unterstützter Plattform (`chesscom`, `lichess`). Jeder Adapter exportiert:

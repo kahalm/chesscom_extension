@@ -24,6 +24,32 @@
   const MIN_FLUSH_MS = 10000;  // erst ab so viel akkumulierter Zeit senden
   const MAX_FLUSH_S = 3600;    // Serverseitiger Cap je Haeppchen (hier gespiegelt)
 
+  // ---- Sprache (geteilte Tabelle lib/i18n.js, per Manifest VOR dieser Datei geladen) ----
+  // Die Statustexte des Kurs-Imports entstehen HIER und gehen als fertiger Text ans Popup
+  // (Nachrichtenformat unverändert) — also wird auch hier übersetzt. Fehlt die Tabelle
+  // (alte Installation / Manifest noch ohne lib/i18n.js), liefert t() den Schlüssel zurück,
+  // statt zu werfen: sichtbar kaputt, aber der Import läuft weiter.
+  let rcLang = 'en';
+  function t(key, params) {
+    const i18n = self.RepCheckI18n;
+    if (!i18n || typeof i18n.translate !== 'function') return key;
+    return i18n.translate(rcLang, key, params);
+  }
+  function applyLang(gespeichert) {
+    const i18n = self.RepCheckI18n;
+    rcLang = (i18n && typeof i18n.resolveLang === 'function')
+      ? i18n.resolveLang(gespeichert, navigator.languages)
+      : 'en';
+  }
+  try {
+    chrome.storage.local.get(['rcLang'], (r) => applyLang(r && r.rcLang));
+    chrome.storage.onChanged.addListener((ch, area) => {
+      if (area === 'local' && ch.rcLang) applyLang(ch.rcLang.newValue);
+      // Kein Neu-Rendern nötig: diese Datei hält keine eigene UI; der zuletzt gesetzte
+      // Statustext bleibt in seiner Sprache, der nächste kommt in der neuen.
+    });
+  } catch (e) { /* ohne chrome.storage bleibt es bei 'en' */ }
+
   let activeMs = 0;
   let movesTrained = 0;
   let linesTrained = 0;        // abgeschlossene Linien (Klick/Leertaste auf „Next variation")
@@ -657,7 +683,7 @@
   // ---- Ingest an RookHub (Egress über Background-Worker, CORS-frei; Token bleibt hier) ----
   async function ingest(bid, chapters, target, courseName) {
     const cfg = await readConfig();
-    if (!cfg || !cfg.url || !cfg.token) throw new Error('Nicht mit RookHub verbunden');
+    if (!cfg || !cfg.url || !cfg.token) throw new Error(t('err.notConnected'));
     const baseUrl = String(cfg.url).replace(/\/$/, '');
     return new Promise((resolve, reject) => {
       chrome.runtime.sendMessage({
@@ -669,7 +695,7 @@
         expect: 'json',
       }, (resp) => {
         if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
-        if (!resp || !resp.ok) return reject(new Error((resp && resp.body && resp.body.message) || ('HTTP ' + (resp && resp.status))));
+        if (!resp || !resp.ok) return reject(new Error((resp && resp.body && resp.body.message) || t('err.http', { status: (resp && resp.status) || 0 })));
         resolve(resp.body);
       });
     });
@@ -692,9 +718,9 @@
   // same-origin Chessable-Fetch (V2 aktiv) — gleiche Rezeptur wie fetchCourseNameMap (Bearer, credentials).
   async function chessableGet(path) {
     const token = await readChessableToken();
-    if (!token) throw new Error('Kein Chessable-Token (auf chessable.com eingeloggt?)');
+    if (!token) throw new Error(t('err.noChessableToken'));
     const uid = decodeUid(token);
-    if (!uid) throw new Error('Chessable-Token ohne uid');
+    if (!uid) throw new Error(t('err.chessableTokenNoUid'));
     const sep = path.includes('?') ? '&' : '?';
     const url = `https://www.chessable.com/api/v1/${path}${sep}uid=${uid}`;
     const init = { headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' }, credentials: 'include' };
@@ -707,17 +733,22 @@
       const retryAfter = parseRetryAfterMs(resp.headers.get('Retry-After'));
       const backoff = (retryAfter != null ? retryAfter : Math.min(30000, CRAWL_INTER_MS * Math.pow(2, attempt)))
         + Math.floor(Math.random() * 400);
-      setStatus(`Chessable drosselt (HTTP ${resp.status}) — warte ${Math.round(backoff / 1000)} s (Versuch ${attempt}/${CHESSABLE_MAX_ATTEMPTS - 1}) …`);
+      setStatus(t('import.throttled', {
+        status: resp.status,
+        seconds: Math.round(backoff / 1000),
+        attempt,
+        max: CHESSABLE_MAX_ATTEMPTS - 1,
+      }));
       await sleep(backoff);
     }
-    throw new Error('Chessable HTTP ' + lastStatus);
+    throw new Error(t('err.chessableHttp', { status: lastStatus }));
   }
 
   // Ein Kapitel-Chunk an den kapitelweisen Ingest (bounded pro Request). final=true schließt die
   // Session ab → Server parst+importiert den GANZEN Kurs (korrekte Kapitel-/Round-Reihenfolge).
   async function ingestChunk(sessionId, bid, target, courseName, chapter, final) {
     const cfg = await readConfig();
-    if (!cfg || !cfg.url || !cfg.token) throw new Error('Nicht mit RookHub verbunden');
+    if (!cfg || !cfg.url || !cfg.token) throw new Error(t('err.notConnected'));
     const baseUrl = String(cfg.url).replace(/\/$/, '');
     return new Promise((resolve, reject) => {
       chrome.runtime.sendMessage({
@@ -729,7 +760,7 @@
         expect: 'json',
       }, (resp) => {
         if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
-        if (!resp || !resp.ok) return reject(new Error((resp && resp.body && resp.body.message) || ('HTTP ' + (resp && resp.status))));
+        if (!resp || !resp.ok) return reject(new Error((resp && resp.body && resp.body.message) || t('err.http', { status: (resp && resp.status) || 0 })));
         resolve(resp.body);
       });
     });
@@ -754,8 +785,8 @@
     const sessionId = newSessionId();
     const incremental = target !== 'book';
     try {
-      if (!bid) throw new Error('Kein Kurs erkannt');
-      if (!Crawl) throw new Error('Interne lib fehlt');
+      if (!bid) throw new Error(t('err.noCourse'));
+      if (!Crawl) throw new Error(t('err.libMissing'));
 
       // Schon importierte oids (nur fürs inkrementelle Repertoire-Anhängen). Fehlt der Endpoint (alte
       // RookHub-Version) → leere Menge → es wird alles geholt (via Append, weiterhin dedupt).
@@ -765,14 +796,14 @@
         already = new Set((prog && prog.oids) || []);
       }
 
-      setStatus('Hole Kursstruktur …');
+      setStatus(t('import.fetchingStructure'));
       const courseText = (cap.courseText && cap.bid === bid) ? cap.courseText : await chessableGet(`getCourse?bid=${bid}`);
       const lids = Crawl.parseChapterLids(courseText);
-      if (!lids.length) throw new Error('Keine Kapitel gefunden');
+      if (!lids.length) throw new Error(t('err.noChapters'));
       const lists = [];
       let total = 0, toFetch = 0;
       for (const lid of lids) {
-        if (cancelRequested) { setStatus('Abgebrochen.'); return; }
+        if (cancelRequested) { setStatus(t('import.aborted')); return; }
         const listText = (cap.lists[lid] && cap.bid === bid) ? cap.lists[lid] : await chessableGet(`getList?bid=${bid}&lid=${lid}`);
         harvestFromList(bid, listText);   // nHard je Linie auch beim aktiven Kurs-Holen ernten
         const oids = Crawl.parseLineOids(listText);
@@ -784,7 +815,7 @@
       const courseName = bestCourseName(bid);
 
       if (incremental && toFetch === 0) {
-        setStatus(`Nichts Neues — alle ${total} Linien schon auf RookHub.`);
+        setStatus(t('import.nothingNew', { count: total }));
         ensureProgress(true);
         return;
       }
@@ -794,32 +825,34 @@
       for (const { listText, oids } of lists) {
         const lines = [];
         for (const oid of oids) {
-          if (cancelRequested) { setStatus('Abgebrochen.'); return; }
+          if (cancelRequested) { setStatus(t('import.aborted')); return; }
           if (incremental && already.has(String(oid))) { skipped++; continue; }   // schon auf RookHub → nicht holen
           let g = cap.games[oid];
           if (!g) { g = await chessableGet(`getGame?lng=en&oid=${oid}`); await sleep(CRAWL_INTER_MS); }
           if (g && g.trim() && g.trim() !== '{}') { lines.push(g); cap.games[oid] = g; harvestFromGame(bid, oid, g); }
-          done++; setStatus(`Hole neue Linien … ${done}/${toFetch}`);
+          done++; setStatus(t('import.fetchingLines', { done, total: toFetch }));
         }
         if (!lines.length) continue;
         if (incremental) newChapters.push({ chapterJson: listText, lines });
         else await ingestChunk(sessionId, bid, target, courseName, { chapterJson: listText, lines }, false);
         sent++;
       }
-      if (!sent) throw new Error('Keine Linien geholt');
+      if (!sent) throw new Error(t('err.noLines'));
 
       if (incremental) {
-        setStatus('Hänge neue Linien an …');
+        setStatus(t('import.appending'));
         const res = await ingestLive(bid, target, courseName, newChapters);
-        setStatus(`Fertig: ${res.imported} neue Linien angehängt${skipped ? ` (${skipped} schon vorhanden)` : ''}.`);
+        setStatus(skipped
+          ? t('import.doneAppendedSkipped', { count: res.imported, skipped })
+          : t('import.doneAppended', { count: res.imported }));
       } else {
-        setStatus('Importiere in RookHub …');
+        setStatus(t('import.importing'));
         const res = await ingestChunk(sessionId, bid, target, courseName, null, true);
-        setStatus(`Fertig: ${res.imported} ${target === 'book' ? 'Puzzles' : 'Linien'} importiert.`);
+        setStatus(t(target === 'book' ? 'import.doneImportedPuzzles' : 'import.doneImportedLines', { count: res.imported }));
       }
       ensureProgress(true);
     } catch (err) {
-      setStatus('Fehler: ' + ((err && err.message) || err));
+      setStatus(t('import.error', { error: (err && err.message) || err }));
     } finally { crawling = false; crawlStartedAt = null; }
   }
 
@@ -827,13 +860,13 @@
   async function importCaptured(target) {
     const bid = cap.bid || currentCourseId();
     const chapters = capturedChapters();
-    if (!bid || !chapters.length) { setStatus('Nichts mitgeschnitten.'); return; }
+    if (!bid || !chapters.length) { setStatus(t('import.nothingCaptured')); return; }
     try {
-      setStatus('Importiere Mitschnitt …');
+      setStatus(t('import.importingCapture'));
       const res = await ingest(bid, chapters, target, bestCourseName(bid));
-      setStatus(`Fertig: ${res.imported} ${target === 'book' ? 'Puzzles' : 'Linien'} importiert.`);
+      setStatus(t(target === 'book' ? 'import.doneImportedPuzzles' : 'import.doneImportedLines', { count: res.imported }));
       ensureProgress(true);
-    } catch (err) { setStatus('Fehler: ' + ((err && err.message) || err)); }
+    } catch (err) { setStatus(t('import.error', { error: (err && err.message) || err })); }
   }
 
   // Live-Append (V1 „beim Durchklicken"): jede NEU erfasste Linie wird kurz gebündelt SOFORT ans
@@ -858,7 +891,7 @@
 
   async function ingestLive(bid, target, courseName, chapters) {
     const cfg = await readConfig();
-    if (!cfg || !cfg.url || !cfg.token) throw new Error('Nicht mit RookHub verbunden');
+    if (!cfg || !cfg.url || !cfg.token) throw new Error(t('err.notConnected'));
     const baseUrl = String(cfg.url).replace(/\/$/, '');
     return new Promise((resolve, reject) => {
       chrome.runtime.sendMessage({
@@ -870,7 +903,7 @@
         expect: 'json',
       }, (resp) => {
         if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
-        if (!resp || !resp.ok) return reject(new Error((resp && resp.body && resp.body.message) || ('HTTP ' + (resp && resp.status))));
+        if (!resp || !resp.ok) return reject(new Error((resp && resp.body && resp.body.message) || t('err.http', { status: (resp && resp.status) || 0 })));
         resolve(resp.body);
       });
     });
@@ -895,11 +928,11 @@
     picked.forEach(o => sentOids.add(o));   // optimistisch; bei Fehler zurücknehmen
     try {
       const res = await ingestLive(bid, importTarget, bestCourseName(bid), chapters);
-      setStatus(`Live: ${res.imported} neu angehängt (${sentOids.size} gesendet).`);
+      setStatus(t('import.liveAppended', { count: res.imported, sent: sentOids.size }));
       ensureProgress(true);   // Overlay live nachziehen
     } catch (err) {
       picked.forEach(o => sentOids.delete(o));
-      setStatus('Live-Fehler: ' + ((err && err.message) || err));
+      setStatus(t('import.liveError', { error: (err && err.message) || err }));
     } finally {
       liveFlushing = false;
       if (autoImport && hasUnsentLine()) scheduleAutoImport();   // während des Flushs kam Neues
@@ -980,7 +1013,7 @@
       const badge = document.createElement('span');
       badge.className = 'rc-prog-badge';
       badge.textContent = done ? '✓' : '○';
-      badge.title = done ? 'Auf RookHub' : 'Noch nicht auf RookHub';
+      badge.title = t(done ? 'progress.onRookhub' : 'progress.notOnRookhub');
       badge.style.cssText = `margin-right:6px;font-weight:700;color:${done ? '#4caf50' : '#9aa4b2'}`;
       row.insertBefore(badge, row.firstChild);
     }
@@ -1005,7 +1038,8 @@
   let importTarget = 'repertoire';   // vom Popup gesetzt (repertoire|book)
   let lastStatus = '';
 
-  function setStatus(t) { lastStatus = t || ''; }
+  // Parameter bewusst `txt`, nicht `t` — `t` ist der Übersetzer-Wrapper (sonst verdeckt).
+  function setStatus(txt) { lastStatus = txt || ''; }
 
   // Kurs-/Kapitel-Fortschritt fürs Popup (null, solange keine Struktur da).
   function progressSummary() {
@@ -1050,7 +1084,7 @@
         sendResponse({ started: true });
         break;
       case 'cancel':
-        if (crawling) { cancelRequested = true; setStatus('Abbruch angefordert …'); }
+        if (crawling) { cancelRequested = true; setStatus(t('import.abortRequested')); }
         sendResponse(importState());
         break;
       case 'importCaptured':

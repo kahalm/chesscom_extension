@@ -18,6 +18,7 @@
       "js": [
         "chess.min.js",
         "lib/repertoire-text.js",
+        "lib/i18n.js",
         "content.js"
       ],
       "run_at": "document_idle"
@@ -30,6 +31,7 @@
       "js": [
         "chessable-token.js",
         "lib/chessable-crawl.js",
+        "lib/i18n.js",
         "chessable-activity.js"
       ],
       "run_at": "document_idle"

@@ -265,6 +265,11 @@
         other: 'Import recorded lines ({count} lines)',
       },
       'import.capturedPlain': 'Import recorded lines',
+      'import.capturedInfo': {
+        one: '{count} line recorded',
+        other: '{count} lines recorded',
+      },
+      'import.capturedNone': 'Nothing recorded yet',
       'import.live': 'Append lines live as you click through the course',
       'import.notReady': 'Content script not ready — reload the page.',
       'import.course': 'Course: {name}',
@@ -342,6 +347,7 @@
       'status.connecting': 'RookHub: connecting…',
       'status.refreshing': 'RookHub: refreshing…',
       'status.notConfigured': 'RookHub: not configured yet.',
+      'status.error': 'RookHub: {error}',
       'status.connectedNoOpenings': 'RookHub: connected, but no opening repertoires found.',
       'status.connectedFiles': {
         one: 'RookHub: connected ({count} file).',
@@ -350,6 +356,7 @@
 
       // — Prüf-Ergebnis —
       'check.outOfRep': 'Out of repertoire at move {move} ({color}: {san})',
+      'check.outOfRepWithGaps': 'Out of repertoire at move {move} ({color}: {san}) ({gaps})',
       'check.transpositions': {
         one: '{count} transposition',
         other: '{count} transpositions',
@@ -369,6 +376,10 @@
       'tools.saveGame': 'Save game to RookHub',
       'tools.saved': 'Game saved',
       'tools.savedWithLink': 'Saved · share link copied',
+
+      // — ✓/○-Marker an Chessables eigener Linienliste —
+      'progress.onRookhub': 'On RookHub',
+      'progress.notOnRookhub': 'Not on RookHub yet',
 
       // — Fehlertexte —
       'err.noBackground': 'no response from the background worker',
@@ -459,6 +470,11 @@
         other: 'Mitschnitt importieren ({count} Linien)',
       },
       'import.capturedPlain': 'Mitschnitt importieren',
+      'import.capturedInfo': {
+        one: '{count} Linie mitgeschnitten',
+        other: '{count} Linien mitgeschnitten',
+      },
+      'import.capturedNone': 'Noch nichts mitgeschnitten',
       'import.live': 'Linien beim Durchklicken live anhängen',
       'import.notReady': 'Content-Script nicht bereit — Seite neu laden.',
       'import.course': 'Kurs: {name}',
@@ -534,6 +550,7 @@
       'status.connecting': 'RookHub: verbinde…',
       'status.refreshing': 'RookHub: aktualisiere…',
       'status.notConfigured': 'RookHub: noch nicht konfiguriert.',
+      'status.error': 'RookHub: {error}',
       'status.connectedNoOpenings': 'RookHub: verbunden, aber keine Opening-Repertoires gefunden.',
       'status.connectedFiles': {
         one: 'RookHub: verbunden ({count} Datei).',
@@ -541,6 +558,7 @@
       },
 
       'check.outOfRep': 'Aus dem Repertoire bei Zug {move} ({color}: {san})',
+      'check.outOfRepWithGaps': 'Aus dem Repertoire bei Zug {move} ({color}: {san}) ({gaps})',
       'check.transpositions': {
         one: '{count} Zugumstellung',
         other: '{count} Zugumstellungen',
@@ -559,6 +577,8 @@
       'tools.saveGame': 'Partie in RookHub speichern',
       'tools.saved': 'Partie gespeichert',
       'tools.savedWithLink': 'Gespeichert · Teilen-Link kopiert',
+      'progress.onRookhub': 'Auf RookHub',
+      'progress.notOnRookhub': 'Noch nicht auf RookHub',
 
       'err.noBackground': 'keine Antwort vom Background-Worker',
       'err.tokenInvalid': 'Token ungültig oder abgelaufen.',
@@ -647,6 +667,12 @@
         other: 'Uvezi snimljene linije ({count} linija)',
       },
       'import.capturedPlain': 'Uvezi snimku',
+      'import.capturedInfo': {
+        one: 'snimljena {count} linija',
+        few: 'snimljene {count} linije',
+        other: 'snimljeno {count} linija',
+      },
+      'import.capturedNone': 'Još ništa nije snimljeno',
       'import.live': 'Dodavaj linije uživo tijekom klikanja',
       'import.notReady': 'Content script nije spreman — ponovno učitaj stranicu.',
       'import.course': 'Tečaj: {name}',
@@ -727,6 +753,7 @@
       'status.connecting': 'RookHub: povezivanje…',
       'status.refreshing': 'RookHub: osvježavanje…',
       'status.notConfigured': 'RookHub: još nije podešen.',
+      'status.error': 'RookHub: {error}',
       'status.connectedNoOpenings': 'RookHub: povezan, ali nije pronađen nijedan repertoar otvaranja.',
       'status.connectedFiles': {
         one: 'RookHub: povezan ({count} datoteka).',
@@ -734,6 +761,7 @@
         other: 'RookHub: povezan ({count} datoteka).',
       },
       'check.outOfRep': 'Izvan repertoara na potezu {move} ({color}: {san})',
+      'check.outOfRepWithGaps': 'Izvan repertoara na potezu {move} ({color}: {san}) ({gaps})',
       'check.transpositions': {
         one: '{count} transpozicija',
         few: '{count} transpozicije',
@@ -771,6 +799,8 @@
       'menu.copyChessableToken': '🔑 Kopiraj Chessable token',
       'menu.noChessableToken': 'RepCheck: u localStorageu nije pronađen Chessable token — jesi li prijavljen?',
       'menu.chessableTokenCopied': 'RepCheck: Chessable token kopiran u međuspremnik.',
+      'progress.onRookhub': 'Na RookHubu',
+      'progress.notOnRookhub': 'Još nije na RookHubu',
     },
   };
 
@@ -837,6 +867,33 @@
     ));
   }
   // <<<REPCHECK-SHARED:i18n
+
+  // ─── Sprache ────────────────────────────────────────────────────────
+  // rcTranslate/rcResolveLang stammen aus der Region oben (generiert aus
+  // extension/lib/i18n.js). Die ausdrueckliche Wahl des Nutzers liegt im
+  // GM-Storage unter `rcLang` ('en'|'de'|'hr'); fehlt sie, entscheidet die
+  // Browsersprache.
+  let rcLang = 'en';
+  try {
+    rcGespeicherteSprache = (typeof GM_getValue === 'function' ? GM_getValue('rcLang') : '') || '';
+    rcLang = rcResolveLang(rcGespeicherteSprache || null, navigator.languages);
+  } catch (e) {
+    rcLang = rcResolveLang(null, navigator.languages);
+  }
+  /** Ausdrückliche Wahl des Nutzers ('' = Automatik) — nur für die Anzeige im Panel. */
+  let rcGespeicherteSprache = '';
+  /** Welche Sprache die Automatik wählen würde — für die Beschriftung „Automatisch (…)". */
+  function rcAutoLang() {
+    return rcResolveLang(null, navigator.languages);
+  }
+
+  function t(key, params) { return rcTranslate(rcLang, key, params); }
+
+  // Uebersetzten Text fuer die innerHTML-Vorlage des Panels entschaerfen.
+  const RC_HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+  function rcEscHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => RC_HTML_ESCAPES[c]);
+  }
 
   // ─── IndexedDB helpers ───────────────────────────────────────────────
   function openIDB() {
@@ -960,7 +1017,7 @@
   // Endpoint: POST /api/extension/analyze-game mit { moves, kind, refresh }.
   // Antwort: { deviation, gaps, inRepertoire, fenBeforeDeviation, repertoireFileCount, illegalMoveAt }.
   async function rookhubAnalyzeGame(cfg, moves, options) {
-    if (!cfg || !cfg.url || !cfg.token) throw new Error('RookHub: URL oder Token fehlt.');
+    if (!cfg || !cfg.url || !cfg.token) throw new Error(t('err.urlTokenMissing'));
     const url = cfg.url.replace(/\/$/, '') + '/api/extension/analyze-game';
     const resp = await fetch(url, {
       method: 'POST',
@@ -976,15 +1033,15 @@
         refresh: !!(options && options.refresh),
       }),
     });
-    if (resp.status === 401) throw new Error('Token ungültig oder abgelaufen.');
-    if (!resp.ok) throw new Error('RookHub HTTP ' + resp.status);
+    if (resp.status === 401) throw new Error(t('err.tokenInvalid'));
+    if (!resp.ok) throw new Error(t('err.rookhubHttp', { status: resp.status }));
     return await resp.json();
   }
 
   // Schickt die SAN-Zugliste + Best-Effort-Metadaten; der Server baut daraus das PGN
   // (reicheres Format als ein vorgebautes PGN: Spieler/Ergebnis/Game-ID für Dedup + Anzeige).
   async function rookhubSaveGame(cfg, moves, meta) {
-    if (!cfg || !cfg.url || !cfg.token) throw new Error('RookHub: URL oder Token fehlt.');
+    if (!cfg || !cfg.url || !cfg.token) throw new Error(t('err.urlTokenMissing'));
     const url = cfg.url.replace(/\/$/, '') + '/api/extension/games';
     const resp = await fetch(url, {
       method: 'POST',
@@ -1007,8 +1064,8 @@
         blackElo: meta.blackElo,
       }),
     });
-    if (resp.status === 401) throw new Error('Token ungültig oder abgelaufen.');
-    if (!resp.ok) throw new Error('RookHub HTTP ' + resp.status);
+    if (resp.status === 401) throw new Error(t('err.tokenInvalid'));
+    if (!resp.ok) throw new Error(t('err.rookhubHttp', { status: resp.status }));
     return resp.json().catch(() => null);
   }
 
@@ -1028,9 +1085,9 @@
     const result = await rookhubAnalyzeGame(cfg, [], { refresh });
     const fc = result && typeof result.repertoireFileCount === 'number' ? result.repertoireFileCount : 0;
     if (fc === 0) {
-      updateStatusText('RookHub: verbunden, aber keine Opening-Repertoires gefunden.');
+      updateStatusText(t('status.connectedNoOpenings'));
     } else {
-      updateStatusText('RookHub: verbunden (' + fc + ' Datei' + (fc === 1 ? '' : 'en') + ').');
+      updateStatusText(t('status.connectedFiles', { count: fc }));
     }
     runCheck();
   }
@@ -1115,13 +1172,13 @@
   function loadRepertoireFromFiles(fileList) {
     const pgnFiles = Array.from(fileList).filter(f => f.name.toLowerCase().endsWith('.pgn'));
     if (pgnFiles.length === 0) {
-      updateStatusText('No .pgn files found in folder');
+      updateStatusText(t('panel.noPgnFiles'));
       return;
     }
 
     Promise.all(pgnFiles.map(f => f.text())).then(async pgnTexts => {
       repertoirePositions = await buildAndSavePositionSet(pgnTexts);
-      updateStatusText(`Repertoire loaded: ${pgnTexts.length} file(s)`);
+      updateStatusText(t('panel.loadedFiles', { count: pgnTexts.length }));
       runCheck();
     });
   }
@@ -1150,11 +1207,11 @@
 
     if (pgnTexts.length > 0) {
       repertoirePositions = await buildAndSavePositionSet(pgnTexts);
-      updateStatusText(`Repertoire loaded: ${pgnTexts.length} file(s)`);
+      updateStatusText(t('panel.loadedFiles', { count: pgnTexts.length }));
       runCheck();
       return true;
     } else {
-      updateStatusText('No .pgn files found in folder');
+      updateStatusText(t('panel.noPgnFiles'));
       return false;
     }
   }
@@ -1162,7 +1219,7 @@
   async function loadRepertoireFromText(pgnText) {
     if (!pgnText.trim()) return;
     repertoirePositions = await buildAndSavePositionSet([pgnText]);
-    updateStatusText('Repertoire loaded from text');
+    updateStatusText(t('panel.loadedText'));
     runCheck();
   }
 
@@ -1699,7 +1756,7 @@
     btn.id = 'repcheck-floating';
     btn.type = 'button';
     btn.textContent = '♟';
-    btn.title = 'Aktuelle Partie gegen Repertoire pruefen';
+    btn.title = t('tools.check');
     btn.addEventListener('click', runCheckTrigger);
     wrap.appendChild(btn);
   }
@@ -1719,7 +1776,7 @@
       btn.id = 'repcheck-chessable';
       btn.type = 'button';
       btn.textContent = '🔎';
-      btn.title = 'FEN vor Abweichung in Chessable suchen';
+      btn.title = t('tools.searchFen');
       btn.addEventListener('click', () => {
         if (!lastDeviationFen) return;
         window.open(chessableSearchUrl(lastDeviationFen), '_blank', 'noopener,noreferrer');
@@ -1735,7 +1792,7 @@
     btn.id = 'repcheck-copy-pgn';
     btn.type = 'button';
     btn.textContent = '📋';
-    btn.title = 'Partie-PGN kopieren';
+    btn.title = t('tools.copyPgn');
     btn.addEventListener('click', copyGamePgn);
     wrap.appendChild(btn);
   }
@@ -1751,7 +1808,7 @@
     btn.id = 'repcheck-save-game';
     btn.type = 'button';
     btn.textContent = '💾';
-    btn.title = 'Partie in RookHub speichern';
+    btn.title = t('tools.saveGame');
     btn.addEventListener('click', async () => {
       const currentCfg = await loadRookhubConfig().catch(() => null);
       if (!currentCfg) return;
@@ -1760,7 +1817,7 @@
       btn.textContent = '…';
       btn.disabled = true;
       const reset = () => setTimeout(() => {
-        btn.textContent = '💾'; btn.title = 'Partie in RookHub speichern'; btn.disabled = false;
+        btn.textContent = '💾'; btn.title = t('tools.saveGame'); btn.disabled = false;
       }, 1500);
       try {
         const meta = await getGameMeta();
@@ -1776,7 +1833,7 @@
           } catch (e) { /* Clipboard evtl. blockiert */ }
         }
         btn.textContent = copied ? '🔗' : '✓';
-        btn.title = copied ? 'Gespeichert · Teilen-Link kopiert' : 'Partie gespeichert';
+        btn.title = copied ? t('tools.savedWithLink') : t('tools.saved');
         reset();
       } catch (e) {
         btn.textContent = '✗';
@@ -1813,7 +1870,7 @@
   }
 
   function showBanner(message, type) {
-    // Seit v1.6.4: Banner ist ein Icon-Only-Quadrat (\u2699) im Floating-Wrap;
+    // Seit v1.6.4: Banner ist ein Icon-Only-Quadrat (⚙) im Floating-Wrap;
     // Statusfarbe codiert deviation/in-rep/no-rep, der Tooltip (title) zeigt
     // den vollen Text. Klick oeffnet das Settings-Panel.
     const wrap = ensureFloatingWrap();
@@ -1823,7 +1880,7 @@
       banner = document.createElement('button');
       banner.id = BANNER_ID;
       banner.type = 'button';
-      banner.textContent = '\u2699';
+      banner.textContent = '⚙';
       banner.addEventListener('click', (e) => {
         e.stopPropagation();
         togglePanel();
@@ -1868,41 +1925,67 @@
 
   // Panel-Markup (reiner String, keine DOM-Nebenwirkungen).
   function panelHtml() {
+    const host = ROOKHUB_DEFAULT_URL.replace(/^https?:\/\//, '');
     return `
-      <h3>Repertoire Settings</h3>
+      <h3>${rcEscHtml(t('panel.heading'))}</h3>
       <div style="margin-bottom: 12px;">
-        <strong>RookHub:</strong><br>
+        <strong>${rcEscHtml(t('panel.rookhub'))}</strong><br>
         <input id="repcheck-rookhub-url" placeholder="https://rookhub.example.com" />
         <input id="repcheck-rookhub-token" placeholder="rkh_…" type="password" />
         <div style="margin-top:6px;">
-          <button id="repcheck-rookhub-connect">Verbinden</button>
-          <button id="repcheck-rookhub-refresh" class="secondary">Aktualisieren</button>
+          <button id="repcheck-rookhub-connect">${rcEscHtml(t('panel.connect'))}</button>
+          <button id="repcheck-rookhub-refresh" class="secondary">${rcEscHtml(t('panel.refresh'))}</button>
         </div>
         <span style="font-size:11px;color:#888;">
-          Noch kein Konto? <a href="${ROOKHUB_DEFAULT_URL}/register" target="_blank" rel="noopener" style="color:#4a9eff;">Auf ${ROOKHUB_DEFAULT_URL.replace(/^https?:\/\//,'')} registrieren</a> · Token dann unter Profil → „Extension-Tokens" erstellen.
+          ${rcEscHtml(t('panel.noAccount'))}<a href="${ROOKHUB_DEFAULT_URL}/register" target="_blank" rel="noopener" style="color:#4a9eff;">${rcEscHtml(t('panel.register', { host }))}</a>${rcEscHtml(t('panel.tokenHint'))}
         </span>
       </div>
       <hr style="border-color:#444;margin:12px 0;">
       <div style="margin-bottom: 12px;">
-        <strong>Load from folder:</strong><br>
-        <button id="repcheck-pick-dir">Select PGN Folder</button>
-        <span id="repcheck-folder-info" style="font-size:12px;color:#888;margin-left:6px;">${repertoirePositions ? '(loaded)' : '(no folder selected)'}</span>
+        <strong>${rcEscHtml(t('panel.folder'))}</strong><br>
+        <button id="repcheck-pick-dir">${rcEscHtml(t('panel.selectFolder'))}</button>
+        <span id="repcheck-folder-info" style="font-size:12px;color:#888;margin-left:6px;">${rcEscHtml(repertoirePositions ? t('panel.folderLoaded') : t('panel.noFolder'))}</span>
       </div>
       <hr style="border-color:#444;margin:12px 0;">
       <div>
-        <strong>Or paste PGN:</strong><br>
-        <textarea id="repcheck-pgn-input" placeholder="Paste your repertoire PGN here..."></textarea>
-        <button id="repcheck-load-pgn">Load PGN</button>
-        <button id="repcheck-close" class="secondary">Close</button>
+        <strong>${rcEscHtml(t('panel.paste'))}</strong><br>
+        <textarea id="repcheck-pgn-input" placeholder="${rcEscHtml(t('panel.pastePlaceholder'))}"></textarea>
+        <button id="repcheck-load-pgn">${rcEscHtml(t('panel.loadPgn'))}</button>
+        <button id="repcheck-close" class="secondary">${rcEscHtml(t('panel.close'))}</button>
+      </div>
+      <hr style="border-color:#444;margin:12px 0;">
+      <div>
+        <label style="font-size:12px;color:#bbb;">${rcEscHtml(t('lang.label'))}
+          <select id="repcheck-lang" style="margin-left:6px;">
+            <option value="">${rcEscHtml(t('lang.auto', { lang: rcAutoLang() }))}</option>
+            <option value="en">English</option>
+            <option value="de">Deutsch</option>
+            <option value="hr">Hrvatski</option>
+          </select>
+        </label>
       </div>
       <div class="status" id="repcheck-status">
-        ${repertoirePositions ? 'Repertoire loaded' : 'No repertoire loaded'}
+        ${rcEscHtml(repertoirePositions ? t('panel.loaded') : t('panel.notLoaded'))}
       </div>
     `;
   }
 
   // RookHub-Felder vorbefuellen (async) + alle Panel-Buttons verdrahten.
   function wirePanelEvents() {
+    // Sprachwahl: leerer Wert = Automatik. Der Wert wird GELÖSCHT statt als '' gespeichert,
+    // damit die Browsersprache wieder greift.
+    const langSel = document.getElementById('repcheck-lang');
+    if (langSel) {
+      langSel.value = rcGespeicherteSprache || '';
+      langSel.addEventListener('change', () => {
+        const wahl = langSel.value;
+        rcGespeicherteSprache = wahl;
+        try { GM_setValue('rcLang', wahl); } catch (e) { /* GM nicht verfügbar */ }
+        rcLang = rcResolveLang(wahl || null, navigator.languages);
+        rcApplyLang();
+      });
+    }
+
     // Config laden; ohne vorhandene mit der Default-Instanz vorbelegen, damit
     // Neu-User nicht erst eine URL suchen muessen.
     loadRookhubConfig().then(cfg => {
@@ -1929,26 +2012,26 @@
     document.getElementById('repcheck-rookhub-connect')?.addEventListener('click', async () => {
       const url = (document.getElementById('repcheck-rookhub-url').value || '').trim();
       const token = (document.getElementById('repcheck-rookhub-token').value || '').trim();
-      if (!url || !token) { updateStatusText('RookHub: URL und Token erforderlich.'); return; }
+      if (!url || !token) { updateStatusText(t('status.needUrlToken')); return; }
       try {
         await saveRookhubConfig({ url, token });
-        updateStatusText('RookHub: verbinde…');
+        updateStatusText(t('status.connecting'));
         await connectRookHub({ url, token });
       } catch (e) {
-        updateStatusText('RookHub: ' + e.message);
+        updateStatusText(t('status.error', { error: e.message }));
       }
     });
 
     document.getElementById('repcheck-rookhub-refresh')?.addEventListener('click', async () => {
       const cfg = await loadRookhubConfig();
-      if (!cfg) { updateStatusText('RookHub: noch nicht konfiguriert.'); return; }
+      if (!cfg) { updateStatusText(t('status.notConfigured')); return; }
       try {
-        updateStatusText('RookHub: aktualisiere…');
+        updateStatusText(t('status.refreshing'));
         await connectRookHub(cfg, { refresh: true });
         // Lokales Set wird nicht mehr genutzt, sobald RookHub konfiguriert ist.
         lastGameMovesKey = '';
       } catch (e) {
-        updateStatusText('RookHub: ' + e.message);
+        updateStatusText(t('status.error', { error: e.message }));
       }
     });
   }
@@ -1975,7 +2058,7 @@
   }
 
   // ─── Main Check Logic ───────────────────────────────────────────────
-  // Source-Priority: RookHub-Config vorhanden \u2192 Server-seitige Analyse (POST analyze-game).
+  // Source-Priority: RookHub-Config vorhanden → Server-seitige Analyse (POST analyze-game).
   // Sonst lokales Position-Set (Folder/PGN-Paste). Bei RookHub-Fehler fallback aufs
   // lokale Set, falls vorhanden (Offline-Modus).
   function renderAnalysis(gameMoves, analysis) {
@@ -1988,15 +2071,19 @@
 
     if (deviationIdx >= 0) {
       const moveNum = Math.floor(deviationIdx / 2) + 1;
-      const color = deviationIdx % 2 === 0 ? 'White' : 'Black';
-      const gapInfo = gaps.length > 0 ? ` (${gaps.length} Zugumstellung${gaps.length > 1 ? 'en' : ''})` : '';
-      showBanner(`Out of repertoire at move ${moveNum} (${color}: ${gameMoves[deviationIdx]})${gapInfo}`, 'deviation');
+      const color = deviationIdx % 2 === 0 ? t('check.white') : t('check.black');
+      // Mit und ohne Zugumstellungs-Anhang sind ZWEI Meldungen, kein zusammengesetzter Satz:
+      // in anderen Sprachen sitzt der Zusatz nicht zwingend am Satzende.
+      const san = gameMoves[deviationIdx];
+      showBanner(gaps.length > 0
+        ? t('check.outOfRepWithGaps', { move: moveNum, color, san, gaps: t('check.transpositions', { count: gaps.length }) })
+        : t('check.outOfRep', { move: moveNum, color, san }), 'deviation');
       highlightDeviation(deviationIdx, gaps, inRepertoire);
     } else if (gaps.length > 0) {
-      showBanner(`Im Repertoire \u2713 (${gaps.length} Zugumstellung${gaps.length > 1 ? 'en' : ''})`, 'in-repertoire');
+      showBanner(t('check.inRepWithGaps', { gaps: t('check.transpositions', { count: gaps.length }) }), 'in-repertoire');
       highlightDeviation(-1, gaps, inRepertoire);
     } else {
-      showBanner('Game fully within repertoire \u2713', 'in-repertoire');
+      showBanner(t('check.fullyInRep'), 'in-repertoire');
       highlightDeviation(-1, [], inRepertoire);
     }
     syncChessableButton();
@@ -2007,7 +2094,7 @@
     if (!isReviewPage()) return;
     const gameMoves = getGameMoves();
     if (gameMoves.length === 0) {
-      showBanner('No moves found', 'no-repertoire');
+      showBanner(t('check.noMoves'), 'no-repertoire');
       return;
     }
     const key = gameMoves.join('\x00');
@@ -2023,7 +2110,7 @@
       } catch (e) {
         console.warn('[RepertoireChecker] RookHub analyze failed:', e);
         if (!repertoirePositions) {
-          showBanner('RookHub: ' + e.message, 'no-repertoire');
+          showBanner(t('status.error', { error: e.message }), 'no-repertoire');
           return;
         }
         // Fallback aufs lokale Set (Offline / Cache aus frueherer Session).
@@ -2031,7 +2118,7 @@
     }
 
     if (!repertoirePositions) {
-      showBanner('No repertoire loaded \u2014 click \u2699 to set up', 'no-repertoire');
+      showBanner(t('check.noRepertoire'), 'no-repertoire');
       return;
     }
     renderAnalysis(gameMoves, analyzeGame(gameMoves));
@@ -2113,11 +2200,11 @@
       return v || null;
     };
     if (typeof GM_registerMenuCommand !== 'undefined') {
-      GM_registerMenuCommand('🔑 Chessable-Token kopieren', () => {
+      GM_registerMenuCommand(t('menu.copyChessableToken'), () => {
         let token = null;
         try { token = extractChessableJwt(localStorage.getItem(CHESSABLE_LS_KEY)); } catch (e) {}
         if (!token) {
-          alert('RepCheck: Kein Chessable-Token im localStorage gefunden — eingeloggt?');
+          alert(t('menu.noChessableToken'));
           return;
         }
         if (typeof GM_setClipboard !== 'undefined') {
@@ -2125,7 +2212,7 @@
         } else if (navigator.clipboard) {
           navigator.clipboard.writeText(token);
         }
-        alert('RepCheck: Chessable-Token in die Zwischenablage kopiert.');
+        alert(t('menu.chessableTokenCopied'));
       });
     }
     // Autoritativer Kursname über den Chessable-Bearer (localStorage-JWT → getHomeData);
@@ -2307,7 +2394,7 @@
     // --- Egress + Chessable-Fetch ---
     async function ingest(bid, chapters, target) {
       const cfg = getCfg();
-      if (!cfg || !cfg.url || !cfg.token) throw new Error('Nicht mit RookHub verbunden');
+      if (!cfg || !cfg.url || !cfg.token) throw new Error(t('err.notConnected'));
       const baseUrl = String(cfg.url).replace(/\/$/, '');
       const courseName = (courseNameApi && courseNameApi.apiCourseName) ? courseNameApi.apiCourseName(bid) : null;
       const resp = await fetch(baseUrl + '/api/extension/chessable/ingest', {
@@ -2356,7 +2443,7 @@
     // Ein Kapitel-Chunk an den kapitelweisen Ingest (bounded); final=true schließt die Session ab.
     async function ingestChunk(sessionId, bid, target, courseName, chapter, final) {
       const cfg = getCfg();
-      if (!cfg || !cfg.url || !cfg.token) throw new Error('Nicht mit RookHub verbunden');
+      if (!cfg || !cfg.url || !cfg.token) throw new Error(t('err.notConnected'));
       const baseUrl = String(cfg.url).replace(/\/$/, '');
       const resp = await fetch(baseUrl + '/api/extension/chessable/ingest/chunk', {
         method: 'POST',
@@ -2388,44 +2475,46 @@
       const incremental = target !== 'book';
       const courseName = (courseNameApi && courseNameApi.apiCourseName) ? courseNameApi.apiCourseName(bid) : null;
       try {
-        if (!bid) throw new Error('Kein Kurs erkannt');
+        if (!bid) throw new Error(t('err.noCourse'));
         let already = new Set();
         if (incremental) { const prog = await fetchImportedOids(bid); already = new Set((prog && prog.oids) || []); }
-        setStatus('Hole Kursstruktur …');
+        setStatus(t('import.fetchingStructure'));
         const courseText = (cap.courseText && cap.bid === bid) ? cap.courseText : await chessableGet(`getCourse?bid=${bid}`);
         const lids = parseChapterLids(courseText);
-        if (!lids.length) throw new Error('Keine Kapitel gefunden');
+        if (!lids.length) throw new Error(t('err.noChapters'));
         const lists = []; let total = 0, toFetch = 0;
-        for (const lid of lids) { if (cancelRequested) { setStatus('Abgebrochen.'); return; } const listText = (cap.lists[lid] && cap.bid === bid) ? cap.lists[lid] : await chessableGet(`getList?bid=${bid}&lid=${lid}`); const oids = parseLineOids(listText); lists.push({ listText, oids }); total += oids.length; toFetch += incremental ? oids.filter(o => !already.has(String(o))).length : oids.length; await sleep(INTER_MS); }
-        if (incremental && toFetch === 0) { setStatus(`Nichts Neues — alle ${total} Linien schon auf RookHub.`); ensureProgress(true); return; }
+        for (const lid of lids) { if (cancelRequested) { setStatus(t('import.aborted')); return; } const listText = (cap.lists[lid] && cap.bid === bid) ? cap.lists[lid] : await chessableGet(`getList?bid=${bid}&lid=${lid}`); const oids = parseLineOids(listText); lists.push({ listText, oids }); total += oids.length; toFetch += incremental ? oids.filter(o => !already.has(String(o))).length : oids.length; await sleep(INTER_MS); }
+        if (incremental && toFetch === 0) { setStatus(t('import.nothingNew', { count: total })); ensureProgress(true); return; }
         let done = 0, sent = 0, skipped = 0;
         const newChapters = [];
         for (const { listText, oids } of lists) {
           const lines = [];
-          for (const oid of oids) { if (cancelRequested) { setStatus('Abgebrochen.'); return; } if (incremental && already.has(String(oid))) { skipped++; continue; } let g = cap.games[oid]; if (!g) { g = await chessableGet(`getGame?lng=en&oid=${oid}`); await sleep(INTER_MS); } if (g && g.trim() && g.trim() !== '{}') { lines.push(g); cap.games[oid] = g; } done++; setStatus(`Hole neue Linien … ${done}/${toFetch}`); }
+          for (const oid of oids) { if (cancelRequested) { setStatus(t('import.aborted')); return; } if (incremental && already.has(String(oid))) { skipped++; continue; } let g = cap.games[oid]; if (!g) { g = await chessableGet(`getGame?lng=en&oid=${oid}`); await sleep(INTER_MS); } if (g && g.trim() && g.trim() !== '{}') { lines.push(g); cap.games[oid] = g; } done++; setStatus(t('import.fetchingLines', { done, total: toFetch })); }
           if (!lines.length) continue;
           if (incremental) newChapters.push({ chapterJson: listText, lines });
           else await ingestChunk(sessionId, bid, target, courseName, { chapterJson: listText, lines }, false);
           sent++;
         }
-        if (!sent) throw new Error('Keine Linien geholt');
+        if (!sent) throw new Error(t('err.noLines'));
         if (incremental) {
-          setStatus('Hänge neue Linien an …');
+          setStatus(t('import.appending'));
           const res = await ingestLive(bid, target, courseName, newChapters);
-          setStatus(`Fertig: ${res.imported} neue Linien angehängt${skipped ? ` (${skipped} schon vorhanden)` : ''}.`); ensureProgress(true);
+          setStatus(skipped
+            ? t('import.doneAppendedSkipped', { count: res.imported, skipped })
+            : t('import.doneAppended', { count: res.imported })); ensureProgress(true);
         } else {
-          setStatus('Importiere in RookHub …');
+          setStatus(t('import.importing'));
           const res = await ingestChunk(sessionId, bid, target, courseName, null, true);
-          setStatus(`Fertig: ${res.imported} ${target === 'book' ? 'Puzzles' : 'Linien'} importiert.`); ensureProgress(true);
+          setStatus(t(target === 'book' ? 'import.doneImportedPuzzles' : 'import.doneImportedLines', { count: res.imported })); ensureProgress(true);
         }
-      } catch (err) { setStatus('Fehler: ' + ((err && err.message) || err)); }
+      } catch (err) { setStatus(t('import.error', { error: (err && err.message) || err })); }
       finally { crawling = false; crawlStartedAt = null; if (crawlTimerInt) { clearInterval(crawlTimerInt); crawlTimerInt = null; } updatePanel(); }
     }
     async function importCaptured(target) {
       const bid = cap.bid || currentCourseId(); const chapters = capturedChapters();
-      if (!bid || !chapters.length) { setStatus('Nichts mitgeschnitten.'); return; }
-      try { setStatus('Importiere Mitschnitt …'); const res = await ingest(bid, chapters, target); setStatus(`Fertig: ${res.imported} ${target === 'book' ? 'Puzzles' : 'Linien'} importiert.`); ensureProgress(true); }
-      catch (err) { setStatus('Fehler: ' + ((err && err.message) || err)); }
+      if (!bid || !chapters.length) { setStatus(t('import.nothingCaptured')); return; }
+      try { setStatus(t('import.importingCapture')); const res = await ingest(bid, chapters, target); setStatus(t(target === 'book' ? 'import.doneImportedPuzzles' : 'import.doneImportedLines', { count: res.imported })); ensureProgress(true); }
+      catch (err) { setStatus(t('import.error', { error: (err && err.message) || err })); }
     }
 
     let autoImport = false, autoImportTimer = null;
@@ -2441,7 +2530,7 @@
     }
     async function ingestLive(bid, target, courseName, chapters) {
       const cfg = getCfg();
-      if (!cfg || !cfg.url || !cfg.token) throw new Error('Nicht mit RookHub verbunden');
+      if (!cfg || !cfg.url || !cfg.token) throw new Error(t('err.notConnected'));
       const baseUrl = String(cfg.url).replace(/\/$/, '');
       const resp = await fetch(baseUrl + '/api/extension/chessable/ingest/live', {
         method: 'POST',
@@ -2474,7 +2563,7 @@
         setStatus(`Live: ${res.imported} neu angehängt (${sentOids.size} gesendet).`); ensureProgress(true);
       } catch (err) {
         picked.forEach(o => sentOids.delete(o));
-        setStatus('Live-Fehler: ' + ((err && err.message) || err));
+        setStatus(t('import.liveError', { error: (err && err.message) || err }));
       } finally {
         liveFlushing = false;
         if (autoImport && hasUnsentLine()) scheduleAutoImport();
@@ -2539,7 +2628,7 @@
         b = document.createElement('span');
         b.className = 'rc-prog-badge';
         b.textContent = done ? '✓' : '○';
-        b.title = done ? 'Auf RookHub' : 'Noch nicht auf RookHub';
+        b.title = t(done ? 'progress.onRookhub' : 'progress.notOnRookhub');
         b.style.cssText = `margin-right:6px;font-weight:700;color:${done ? '#4caf50' : '#9aa4b2'}`;
         row.insertBefore(b, row.firstChild);
       }
@@ -2575,12 +2664,11 @@
       importCapBtn = panel.querySelector('#rc-importcap'); crawlBtn = panel.querySelector('#rc-crawl'); autoChk = panel.querySelector('#rc-auto');
       crawlBtn.addEventListener('click', () => {
         // Läuft ein Crawl, ist derselbe Button der Abbrechen-Knopf.
-        if (crawling) { cancelRequested = true; setStatus('Abbruch angefordert …'); return; }
+        if (crawling) { cancelRequested = true; setStatus(t('import.abortRequested')); return; }
         // Bannrisiko: der aktive Crawl klappert die Chessable-API automatisiert ab → explizite Bestätigung.
-        const ok = window.confirm(
-          'Bannrisiko\n\n„Kurs holen" ruft die Chessable-API automatisiert im Schnelldurchlauf ab. ' +
-          'Das kann gegen Chessables Nutzungsbedingungen verstoßen und im schlimmsten Fall ' +
-          'zur Sperrung deines Kontos führen.\n\nNutze es nur für eigene Kurse und auf eigenes Risiko.\n\nWirklich fortfahren?');
+        const ok = window.confirm([
+          t('import.warn.title'), t('import.warn.body'), t('import.warn.own'), t('import.warn.confirm'),
+        ].join('\n\n'));
         if (!ok) return;
         crawlAndImport(currentTarget());
       });
@@ -2591,12 +2679,12 @@
     function updatePanel() {
       if (!panel) return;
       const n = capturedLineCount();
-      if (capInfoEl) capInfoEl.textContent = n > 0 ? `${n} Linien mitgeschnitten` : 'Noch nichts mitgeschnitten';
+      if (capInfoEl) capInfoEl.textContent = n > 0 ? t('import.capturedInfo', { count: n }) : t('import.capturedNone');
       if (importCapBtn) importCapBtn.style.display = n > 0 ? 'block' : 'none';
       if (autoChk) autoChk.checked = autoImport;
       if (crawlBtn) {
         crawlBtn.disabled = false;
-        crawlBtn.textContent = crawling ? 'Abbrechen' : '⚡ Kurs über meinen Browser holen';
+        crawlBtn.textContent = crawling ? t('import.cancel') : t('import.crawl');
         crawlBtn.style.background = crawling ? '#c62828' : '#2d6cdf';
       }
     }
@@ -3900,8 +3988,8 @@
   // TM-Icons. Das ist der EINZIGE automatische Eingriff des Userscripts
   // beim Page-Load.
   if (typeof GM_registerMenuCommand !== 'undefined') {
-    GM_registerMenuCommand('♟ Prüfen', runCheckTrigger);
-    GM_registerMenuCommand('⚙ Einstellungen', openSettingsTrigger);
+    GM_registerMenuCommand(t('menu.check'), runCheckTrigger);
+    GM_registerMenuCommand(t('menu.settings'), openSettingsTrigger);
   }
 
   // ─── Lightweight SPA-Navigation Watch ───────────────────────────────

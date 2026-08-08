@@ -56,6 +56,51 @@
     normalizedFen, chessComPlayedAt, chessableSearchUrl,
   } = (self.RepCheckLib || {});
 
+  // ─── Sprache (geteilte Tabelle, extension/lib/i18n.js) ──────────────
+  // lib/i18n.js wird als Content-Script VOR content.js geladen (Manifest
+  // content_scripts + Popup-executeScript) → self.RepCheckI18n. Die ausdrueckliche
+  // Wahl des Nutzers steht in chrome.storage.local unter `rcLang` ('en'|'de'|'hr');
+  // fehlt sie, entscheidet die Browsersprache.
+  let rcLang = self.RepCheckI18n.resolveLang(null, navigator.languages);
+  /** Ausdrückliche Wahl des Nutzers ('' = Automatik) — nur für die Anzeige im Panel. */
+  let rcGespeicherteSprache = '';
+  /** Welche Sprache die Automatik wählen würde — für die Beschriftung „Automatisch (…)". */
+  function rcAutoLang() {
+    return self.RepCheckI18n.resolveLang(null, navigator.languages);
+  }
+
+  function t(key, params) { return self.RepCheckI18n.translate(rcLang, key, params); }
+
+  // Uebersetzten Text fuer die innerHTML-Vorlage des Panels entschaerfen.
+  const RC_HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+  function rcEscHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => RC_HTML_ESCAPES[c]);
+  }
+
+  // Nach einem Sprachwechsel das offene Panel neu zeichnen (sonst blieben die
+  // Texte bis zum naechsten Oeffnen stehen).
+  function rcApplyLang() {
+    const panel = document.getElementById(PANEL_ID);
+    if (!panel) return;
+    panel.innerHTML = panelHtml();
+    wirePanelEvents();
+  }
+
+  try {
+    chrome.storage.local.get(['rcLang'], (r) => {
+      rcGespeicherteSprache = (r && r.rcLang) || '';
+      rcLang = self.RepCheckI18n.resolveLang(r && r.rcLang, navigator.languages);
+      rcApplyLang();
+    });
+    chrome.storage.onChanged.addListener((ch, area) => {
+      if (area === 'local' && ch.rcLang) {
+        rcGespeicherteSprache = ch.rcLang.newValue || '';
+        rcLang = self.RepCheckI18n.resolveLang(ch.rcLang.newValue, navigator.languages);
+        rcApplyLang();
+      }
+    });
+  } catch (e) { /* ohne chrome.storage bleibt die Browsersprache */ }
+
   // ─── IndexedDB helpers ───────────────────────────────────────────────
   function openIDB() {
     return new Promise((resolve, reject) => {
@@ -211,7 +256,7 @@
               return;
             }
             if (!response) {
-              reject(new Error('no response from background worker'));
+              reject(new Error(t('err.noBackground')));
               return;
             }
             resolve(response);
@@ -226,7 +271,7 @@
   // POST /api/extension/analyze-game. Antwort:
   // { deviation, gaps, inRepertoire, fenBeforeDeviation, repertoireFileCount, illegalMoveAt }.
   async function rookhubAnalyzeGame(cfg, moves, options) {
-    if (!cfg || !cfg.url || !cfg.token) throw new Error('RookHub: URL oder Token fehlt.');
+    if (!cfg || !cfg.url || !cfg.token) throw new Error(t('err.urlTokenMissing'));
     const url = cfg.url.replace(/\/$/, '') + '/api/extension/analyze-game';
     const resp = await rookhubProxy({
       url,
@@ -243,15 +288,15 @@
       }),
       expect: 'json',
     });
-    if (resp.status === 401) throw new Error('Token ungültig oder abgelaufen.');
-    if (!resp.ok) throw new Error(resp.error || ('RookHub HTTP ' + resp.status));
+    if (resp.status === 401) throw new Error(t('err.tokenInvalid'));
+    if (!resp.ok) throw new Error(resp.error || t('err.rookhubHttp', { status: resp.status }));
     return resp.body;
   }
 
   // Schickt die SAN-Zugliste + Best-Effort-Metadaten; der Server baut daraus das PGN
   // (reicheres Format als ein vorgebautes PGN: Spieler/Ergebnis/Game-ID für Dedup + Anzeige).
   async function rookhubSaveGame(cfg, moves, meta) {
-    if (!cfg || !cfg.url || !cfg.token) throw new Error('RookHub: URL oder Token fehlt.');
+    if (!cfg || !cfg.url || !cfg.token) throw new Error(t('err.urlTokenMissing'));
     const url = cfg.url.replace(/\/$/, '') + '/api/extension/games';
     const resp = await rookhubProxy({
       url,
@@ -275,8 +320,8 @@
       }),
       expect: 'json',
     });
-    if (resp.status === 401) throw new Error('Token ungültig oder abgelaufen.');
-    if (!resp.ok) throw new Error(resp.error || ('RookHub HTTP ' + resp.status));
+    if (resp.status === 401) throw new Error(t('err.tokenInvalid'));
+    if (!resp.ok) throw new Error(resp.error || t('err.rookhubHttp', { status: resp.status }));
     return resp.body;
   }
 
@@ -296,9 +341,9 @@
     const result = await rookhubAnalyzeGame(cfg, [], { refresh });
     const fc = result && typeof result.repertoireFileCount === 'number' ? result.repertoireFileCount : 0;
     if (fc === 0) {
-      updateStatusText('RookHub: verbunden, aber keine Opening-Repertoires gefunden.');
+      updateStatusText(t('status.connectedNoOpenings'));
     } else {
-      updateStatusText('RookHub: verbunden (' + fc + ' Datei' + (fc === 1 ? '' : 'en') + ').');
+      updateStatusText(t('status.connectedFiles', { count: fc }));
     }
     runCheck();
   }
@@ -384,13 +429,13 @@
   function loadRepertoireFromFiles(fileList) {
     const pgnFiles = Array.from(fileList).filter(f => f.name.toLowerCase().endsWith('.pgn'));
     if (pgnFiles.length === 0) {
-      updateStatusText('No .pgn files found in folder');
+      updateStatusText(t('panel.noPgnFiles'));
       return;
     }
 
     Promise.all(pgnFiles.map(f => f.text())).then(async pgnTexts => {
       repertoirePositions = await buildAndSavePositionSet(pgnTexts);
-      updateStatusText(`Repertoire loaded: ${pgnTexts.length} file(s)`);
+      updateStatusText(t('panel.loadedFiles', { count: pgnTexts.length }));
       runCheck();
     });
   }
@@ -419,11 +464,11 @@
 
     if (pgnTexts.length > 0) {
       repertoirePositions = await buildAndSavePositionSet(pgnTexts);
-      updateStatusText(`Repertoire loaded: ${pgnTexts.length} file(s)`);
+      updateStatusText(t('panel.loadedFiles', { count: pgnTexts.length }));
       runCheck();
       return true;
     } else {
-      updateStatusText('No .pgn files found in folder');
+      updateStatusText(t('panel.noPgnFiles'));
       return false;
     }
   }
@@ -431,7 +476,7 @@
   async function loadRepertoireFromText(pgnText) {
     if (!pgnText.trim()) return;
     repertoirePositions = await buildAndSavePositionSet([pgnText]);
-    updateStatusText('Repertoire loaded from text');
+    updateStatusText(t('panel.loadedText'));
     runCheck();
   }
 
@@ -936,7 +981,7 @@
     btn.id = 'repcheck-floating';
     btn.type = 'button';
     btn.textContent = '♟';
-    btn.title = 'Aktuelle Partie gegen Repertoire pruefen';
+    btn.title = t('tools.check');
     btn.addEventListener('click', () => {
       lastGameMovesKey = '';
       rdcRunCheck();
@@ -959,7 +1004,7 @@
       btn.id = 'repcheck-chessable';
       btn.type = 'button';
       btn.textContent = '🔎';
-      btn.title = 'FEN vor Abweichung in Chessable suchen';
+      btn.title = t('tools.searchFen');
       btn.addEventListener('click', () => {
         if (!lastDeviationFen) return;
         window.open(chessableSearchUrl(lastDeviationFen), '_blank', 'noopener,noreferrer');
@@ -976,7 +1021,7 @@
     btn.id = 'repcheck-copy-pgn';
     btn.type = 'button';
     btn.textContent = '📋';
-    btn.title = 'Partie-PGN kopieren';
+    btn.title = t('tools.copyPgn');
     btn.addEventListener('click', copyGamePgn);
     wrap.appendChild(btn);
   }
@@ -992,7 +1037,7 @@
     btn.id = 'repcheck-save-game';
     btn.type = 'button';
     btn.textContent = '💾';
-    btn.title = 'Partie in RookHub speichern';
+    btn.title = t('tools.saveGame');
     btn.addEventListener('click', async () => {
       const currentCfg = await loadRookhubConfig().catch(() => null);
       if (!currentCfg) return;
@@ -1015,11 +1060,11 @@
           catch (e) { /* Clipboard evtl. ohne User-Geste blockiert */ }
         }
         btn.textContent = copied ? '🔗' : '✓';
-        btn.title = copied ? 'Gespeichert · Teilen-Link kopiert' : 'Partie gespeichert';
-        reset('💾', 'Partie in RookHub speichern');
+        btn.title = copied ? t('tools.savedWithLink') : t('tools.saved');
+        reset('💾', t('tools.saveGame'));
       } catch (e) {
         btn.textContent = '✗';
-        reset('💾', 'Partie in RookHub speichern');
+        reset('💾', t('tools.saveGame'));
         console.warn('[RepertoireChecker] Save failed:', e);
       }
     });
@@ -1054,13 +1099,13 @@
     if (el) el.textContent = text;
   }
 
-  // Seit v1.14.0 (nur EXTENSION): der fr\u00fchere \u2699-Indikator (Status + Settings-
-  // \u00d6ffner) ist entfernt. Einstellungen laufen ausschlie\u00dflich \u00fcber das Popup
-  // (\u201eEinstellungen"); das Pr\u00fcf-Ergebnis bleibt direkt in der Zugliste farblich
+  // Seit v1.14.0 (nur EXTENSION): der frühere ⚙-Indikator (Status + Settings-
+  // Öffner) ist entfernt. Einstellungen laufen ausschließlich über das Popup
+  // („Einstellungen"); das Prüf-Ergebnis bleibt direkt in der Zugliste farblich
   // markiert (highlightDeviation). showBanner bleibt als No-op, damit die
-  // bestehenden Aufrufer unver\u00e4ndert bleiben.
-  // \u26a0\ufe0f Userscript-Sync: Im Userscript bleibt showBanner AKTIV (kein Popup dort).
-  function showBanner(_message, _type) { /* extension: kein \u2699-Banner mehr */ }
+  // bestehenden Aufrufer unverändert bleiben.
+  // ⚠️ Userscript-Sync: Im Userscript bleibt showBanner AKTIV (kein Popup dort).
+  function showBanner(_message, _type) { /* extension: kein ⚙-Banner mehr */ }
 
   function highlightDeviation(index, gaps, inRepertoire) {
     document.querySelectorAll(`.${DEVIATION_CLASS}`).forEach(el => el.classList.remove(DEVIATION_CLASS));
@@ -1091,41 +1136,70 @@
 
   // Panel-Markup (reiner String, keine DOM-Nebenwirkungen).
   function panelHtml() {
+    const host = ROOKHUB_DEFAULT_URL.replace(/^https?:\/\//, '');
     return `
-      <h3>Repertoire Settings</h3>
+      <h3>${rcEscHtml(t('panel.heading'))}</h3>
       <div style="margin-bottom: 12px;">
-        <strong>RookHub:</strong><br>
+        <strong>${rcEscHtml(t('panel.rookhub'))}</strong><br>
         <input id="repcheck-rookhub-url" placeholder="https://rookhub.example.com" />
         <input id="repcheck-rookhub-token" placeholder="rkh_…" type="password" />
         <div style="margin-top:6px;">
-          <button id="repcheck-rookhub-connect">Verbinden</button>
-          <button id="repcheck-rookhub-refresh" class="secondary">Aktualisieren</button>
+          <button id="repcheck-rookhub-connect">${rcEscHtml(t('panel.connect'))}</button>
+          <button id="repcheck-rookhub-refresh" class="secondary">${rcEscHtml(t('panel.refresh'))}</button>
         </div>
         <span style="font-size:11px;color:#888;">
-          Noch kein Konto? <a href="${ROOKHUB_DEFAULT_URL}/register" target="_blank" rel="noopener" style="color:#4a9eff;">Auf ${ROOKHUB_DEFAULT_URL.replace(/^https?:\/\//,'')} registrieren</a> · Token dann unter Profil → „Extension-Tokens" erstellen.
+          ${rcEscHtml(t('panel.noAccount'))}<a href="${ROOKHUB_DEFAULT_URL}/register" target="_blank" rel="noopener" style="color:#4a9eff;">${rcEscHtml(t('panel.register', { host }))}</a>${rcEscHtml(t('panel.tokenHint'))}
         </span>
       </div>
       <hr style="border-color:#444;margin:12px 0;">
       <div style="margin-bottom: 12px;">
-        <strong>Load from folder:</strong><br>
-        <button id="repcheck-pick-dir">Select PGN Folder</button>
-        <span id="repcheck-folder-info" style="font-size:12px;color:#888;margin-left:6px;">${repertoirePositions ? '(loaded)' : '(no folder selected)'}</span>
+        <strong>${rcEscHtml(t('panel.folder'))}</strong><br>
+        <button id="repcheck-pick-dir">${rcEscHtml(t('panel.selectFolder'))}</button>
+        <span id="repcheck-folder-info" style="font-size:12px;color:#888;margin-left:6px;">${rcEscHtml(repertoirePositions ? t('panel.folderLoaded') : t('panel.noFolder'))}</span>
       </div>
       <hr style="border-color:#444;margin:12px 0;">
       <div>
-        <strong>Or paste PGN:</strong><br>
-        <textarea id="repcheck-pgn-input" placeholder="Paste your repertoire PGN here..."></textarea>
-        <button id="repcheck-load-pgn">Load PGN</button>
-        <button id="repcheck-close" class="secondary">Close</button>
+        <strong>${rcEscHtml(t('panel.paste'))}</strong><br>
+        <textarea id="repcheck-pgn-input" placeholder="${rcEscHtml(t('panel.pastePlaceholder'))}"></textarea>
+        <button id="repcheck-load-pgn">${rcEscHtml(t('panel.loadPgn'))}</button>
+        <button id="repcheck-close" class="secondary">${rcEscHtml(t('panel.close'))}</button>
+      </div>
+      <hr style="border-color:#444;margin:12px 0;">
+      <div>
+        <label style="font-size:12px;color:#bbb;">${rcEscHtml(t('lang.label'))}
+          <select id="repcheck-lang" style="margin-left:6px;">
+            <option value="">${rcEscHtml(t('lang.auto', { lang: rcAutoLang() }))}</option>
+            <option value="en">English</option>
+            <option value="de">Deutsch</option>
+            <option value="hr">Hrvatski</option>
+          </select>
+        </label>
       </div>
       <div class="status" id="repcheck-status">
-        ${repertoirePositions ? 'Repertoire loaded' : 'No repertoire loaded'}
+        ${rcEscHtml(repertoirePositions ? t('panel.loaded') : t('panel.notLoaded'))}
       </div>
     `;
   }
 
   // RookHub-Felder vorbefuellen (async) + alle Panel-Buttons verdrahten.
   function wirePanelEvents() {
+    // Sprachwahl: leerer Wert = Automatik. Der Wert wird GELÖSCHT statt als '' gespeichert,
+    // damit die Browsersprache wieder greift.
+    const langSel = document.getElementById('repcheck-lang');
+    if (langSel) {
+      langSel.value = rcGespeicherteSprache || '';
+      langSel.addEventListener('change', () => {
+        const wahl = langSel.value;
+        rcGespeicherteSprache = wahl;
+        try {
+          if (wahl) chrome.storage.local.set({ rcLang: wahl });
+          else chrome.storage.local.remove('rcLang');
+        } catch (e) { /* Speicher nicht erreichbar — Wahl gilt für diese Seite */ }
+        rcLang = self.RepCheckI18n.resolveLang(wahl || null, navigator.languages);
+        rcApplyLang();
+      });
+    }
+
     // Config laden; ohne vorhandene mit der Default-Instanz vorbelegen, damit
     // Neu-User nicht erst eine URL suchen muessen.
     loadRookhubConfig().then(cfg => {
@@ -1152,25 +1226,25 @@
     document.getElementById('repcheck-rookhub-connect')?.addEventListener('click', async () => {
       const url = (document.getElementById('repcheck-rookhub-url').value || '').trim();
       const token = (document.getElementById('repcheck-rookhub-token').value || '').trim();
-      if (!url || !token) { updateStatusText('RookHub: URL und Token erforderlich.'); return; }
+      if (!url || !token) { updateStatusText(t('status.needUrlToken')); return; }
       try {
         await saveRookhubConfig({ url, token });
-        updateStatusText('RookHub: verbinde…');
+        updateStatusText(t('status.connecting'));
         await connectRookHub({ url, token });
       } catch (e) {
-        updateStatusText('RookHub: ' + e.message);
+        updateStatusText(t('status.error', { error: e.message }));
       }
     });
 
     document.getElementById('repcheck-rookhub-refresh')?.addEventListener('click', async () => {
       const cfg = await loadRookhubConfig();
-      if (!cfg) { updateStatusText('RookHub: noch nicht konfiguriert.'); return; }
+      if (!cfg) { updateStatusText(t('status.notConfigured')); return; }
       try {
-        updateStatusText('RookHub: aktualisiere…');
+        updateStatusText(t('status.refreshing'));
         await connectRookHub(cfg, { refresh: true });
         lastGameMovesKey = '';
       } catch (e) {
-        updateStatusText('RookHub: ' + e.message);
+        updateStatusText(t('status.error', { error: e.message }));
       }
     });
   }
@@ -1197,7 +1271,7 @@
   }
 
   // ─── Main Check Logic ───────────────────────────────────────────────
-  // Source-Priority: RookHub-Config vorhanden \u2192 Server-seitige Analyse (POST analyze-game).
+  // Source-Priority: RookHub-Config vorhanden → Server-seitige Analyse (POST analyze-game).
   // Sonst lokales Position-Set (Folder/PGN-Paste). Bei RookHub-Fehler fallback aufs
   // lokale Set, falls vorhanden (Offline-Modus).
   function renderAnalysis(gameMoves, analysis) {
@@ -1210,15 +1284,19 @@
 
     if (deviationIdx >= 0) {
       const moveNum = Math.floor(deviationIdx / 2) + 1;
-      const color = deviationIdx % 2 === 0 ? 'White' : 'Black';
-      const gapInfo = gaps.length > 0 ? ` (${gaps.length} Zugumstellung${gaps.length > 1 ? 'en' : ''})` : '';
-      showBanner(`Out of repertoire at move ${moveNum} (${color}: ${gameMoves[deviationIdx]})${gapInfo}`, 'deviation');
+      const color = deviationIdx % 2 === 0 ? t('check.white') : t('check.black');
+      // Mit und ohne Zugumstellungs-Anhang sind ZWEI Meldungen, kein zusammengesetzter Satz:
+      // in anderen Sprachen sitzt der Zusatz nicht zwingend am Satzende.
+      const san = gameMoves[deviationIdx];
+      showBanner(gaps.length > 0
+        ? t('check.outOfRepWithGaps', { move: moveNum, color, san, gaps: t('check.transpositions', { count: gaps.length }) })
+        : t('check.outOfRep', { move: moveNum, color, san }), 'deviation');
       highlightDeviation(deviationIdx, gaps, inRepertoire);
     } else if (gaps.length > 0) {
-      showBanner(`Im Repertoire \u2713 (${gaps.length} Zugumstellung${gaps.length > 1 ? 'en' : ''})`, 'in-repertoire');
+      showBanner(t('check.inRepWithGaps', { gaps: t('check.transpositions', { count: gaps.length }) }), 'in-repertoire');
       highlightDeviation(-1, gaps, inRepertoire);
     } else {
-      showBanner('Game fully within repertoire \u2713', 'in-repertoire');
+      showBanner(t('check.fullyInRep'), 'in-repertoire');
       highlightDeviation(-1, [], inRepertoire);
     }
     syncChessableButton();
@@ -1229,7 +1307,7 @@
     if (!isReviewPage()) return;
     const gameMoves = getGameMoves();
     if (gameMoves.length === 0) {
-      showBanner('No moves found', 'no-repertoire');
+      showBanner(t('check.noMoves'), 'no-repertoire');
       return;
     }
     const key = gameMoves.join('\x00');
@@ -1245,7 +1323,7 @@
       } catch (e) {
         console.warn('[RepertoireChecker] RookHub analyze failed:', e);
         if (!repertoirePositions) {
-          showBanner('RookHub: ' + e.message, 'no-repertoire');
+          showBanner(t('status.error', { error: e.message }), 'no-repertoire');
           return;
         }
         // Fallback aufs lokale Set (Offline / Cache aus frueherer Session).
@@ -1253,7 +1331,7 @@
     }
 
     if (!repertoirePositions) {
-      showBanner('No repertoire loaded \u2014 click \u2699 to set up', 'no-repertoire');
+      showBanner(t('check.noRepertoire'), 'no-repertoire');
       return;
     }
     renderAnalysis(gameMoves, analyzeGame(gameMoves));
