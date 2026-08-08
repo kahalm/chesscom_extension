@@ -318,6 +318,11 @@
   let letzterFeedbackText = '';
   let letzterFeedbackNode = null;
   let letzterFeedbackPly = null;
+  /** Zeitpunkt der zuletzt erfassten Meldung — fasst Flackern innerhalb EINES Zuges zusammen. */
+  let letzterFeedbackZeit = 0;
+  /** Kuerzester Abstand zwischen zwei Zug-Ereignissen. Gemessen lagen echte Zuege 1,8-2,6 s
+   *  auseinander; alles darunter ist Animations-Flackern desselben Zuges. */
+  const FEEDBACK_MIN_ABSTAND_MS = 400;
 
   /** Betrag aus „+60 " bzw. aus dem Gesamttext ziehen; null, wenn es kein XP-Ereignis ist. */
   function parseXp(pointsText, fullText) {
@@ -367,34 +372,39 @@
     feedbackObserver?.disconnect();
     watchedFeedbackRoot = root;
 
-    const lesen = (records) => {
+    const lesen = () => {
       const notifEl = root.querySelector('[data-testid="moveNotification"]') || root;
-      const text = (root.textContent || '').replace(/ /g, ' ').trim();
-      // Leerlauf zwischen zwei Zuegen: Marke loeschen, damit die naechste Meldung auch dann
-      // als neues Ereignis zaehlt, wenn sie wortgleich ist.
+      const text = (root.textContent || '').replace(/\u00a0/g, ' ').trim();
+      // Leerlauf zwischen zwei Zuegen: Marken loeschen, damit die naechste Meldung zaehlt.
       if (!text) { letzterFeedbackText = ''; letzterFeedbackNode = null; return; }
-      // Ein reines Attribut-Zucken (Ein-/Ausblend-Animation) ist KEINE neue Meldung — sonst
-      // zaehlte der Antwortzug des Gegners dieselbe Meldung ein zweites Mal.
-      const inhaltlich = !records || records.some((r) => r.type !== 'attributes');
+
+      // JEDES Feuern des Observers ist EIN Zug-Ereignis. Belegt durch die Messung vom 08.08.
+      // (Inspector v0.6.1): drei wortgleiche „+150 XP" hintereinander aendern weder Text noch
+      // Knoten — sie aendern NUR ein Attribut am Wurzelknoten (Chessable stoesst die
+      // Einblend-Animation neu an), und zwar genau einmal je Zug, im Abstand von rund 2 s.
+      //
+      // Die erste Fassung verwarf reine Attribut-Mutationen ausdruecklich als „kein neues
+      // Ereignis" — dieser Schutz gegen Doppelzaehlung war genau der Grund, warum die
+      // Wiederholungen verschluckt wurden. Statt der Mutations-ART entscheidet jetzt der
+      // zeitliche Abstand: schnelles Flackern innerhalb eines Zuges wird zusammengefasst,
+      // ein echter zweiter Zug nicht. Eine Textaenderung zaehlt IMMER, unabhaengig vom Abstand.
+      const jetzt = Date.now();
+      const textGeaendert = text !== letzterFeedbackText || notifEl !== letzterFeedbackNode;
+      if (!textGeaendert && jetzt - letzterFeedbackZeit < FEEDBACK_MIN_ABSTAND_MS) return;
+      letzterFeedbackZeit = jetzt;
+
       const ply = feedbackPly();
-      // Wortgleiches zaehlt, wenn es zu einem anderen Halbzug gehoert oder in einem frisch
-      // eingehaengten Knoten steht.
-      const neu = text !== letzterFeedbackText
-        || notifEl !== letzterFeedbackNode
-        || (inhaltlich && ply != null && ply !== letzterFeedbackPly);
-      if (!neu) return;
       // Linienwechsel: innerhalb EINER Linie waechst die Halbzug-Nummer in kleinen Schritten
       // (eigener Zug + Antwortzug). Ein GROSSER Sprung — zurueck oder vorwaerts — heisst neue
       // Linie; sonst summierte sich alles ueber die Sitzung auf.
       //
       // WICHTIG: ein kleiner Ruecksprung ist KEIN Linienwechsel. Chessable nimmt einen
-      // alternativen (und einen falschen) Zug zurueck, die Nummer faellt dabei um 1-2. Die
-      // erste Fassung wertete das als neue Linie und loeschte mitten in der Linie die Liste —
-      // genau das ist beim Testen aufgefallen.
+      // alternativen (und einen falschen) Zug zurueck, die Nummer faellt dabei um 1-2.
       const sprungZurueck = ply != null && letzterFeedbackPly != null && letzterFeedbackPly - ply;
       if (ply != null && letzterFeedbackPly != null
           && (sprungZurueck >= 3 || ply > letzterFeedbackPly + 3)) {
         resetLineFeedback();
+        letzterFeedbackZeit = jetzt;   // resetLineFeedback nullt die Marken
       }
       letzterFeedbackText = text;
       letzterFeedbackNode = notifEl;
@@ -403,6 +413,7 @@
       const xp = parseXp(points && points.textContent, text);
       lineFeedback.push({ text, xp, kind: feedbackKind(root) });
       renderFeedback();
+      renderPool();
     };
     lesen();
     feedbackObserver = new MutationObserver(lesen);
@@ -505,6 +516,42 @@
     hideFeedbackList();
     const badge = document.getElementById(FEEDBACK_ID);
     if (badge) badge.style.display = 'none';
+  }
+
+  // ---------- Verbleibende Linien im Trainingspool ----------
+  //
+  // Quelle ist die Zaehler-Plakette im AUSGEWAEHLTEN Tab der Chessable-Leiste. Gemessen am
+  // 08.08. (Inspector-Snapshot):
+  //   <button role="tab" aria-selected="true" id="tab-1">
+  //     <span class="MuiTab-wrapper"><span class="sc-hlqNbq iXetOK">68</span><span>Review</span></span>
+  //
+  // Bewusst NICHT ueber die Klassen `sc-hlqNbq iXetOK` gesucht: styled-components erzeugt die
+  // bei jedem Chessable-Deploy neu, ein Selektor darauf haelt keine Woche. Die Struktur
+  // (role=tab, erste blattlose Kind-Span mit reiner Zahl) ist stabil und sprachunabhaengig —
+  // die Beschriftung („Review") waere es nicht, die haengt an der Kontosprache.
+
+  const POOL_ID = 'repcheck-chessable-pool';
+  let poolTimer = null;
+
+  function trainingPoolRest() {
+    const tab = document.querySelector('button[role="tab"][aria-selected="true"]');
+    if (!tab) return null;
+    for (const span of tab.querySelectorAll('span')) {
+      if (span.children.length) continue;
+      const t = (span.textContent || '').trim();
+      if (/^\d{1,4}$/.test(t)) return parseInt(t, 10);
+    }
+    return null;
+  }
+
+  function renderPool() {
+    const el = document.getElementById(POOL_ID);
+    if (!el) return;
+    const rest = trainingPoolRest();
+    if (rest == null) { el.style.display = 'none'; return; }
+    el.textContent = '\u23F3 ' + rest;
+    el.title = 'Noch offen im aktuellen Trainingspool (aus Chessables Tab-Zaehler)';
+    el.style.display = 'inline-flex';
   }
 
   // ---------- UI ----------
@@ -796,7 +843,7 @@
         // Die Zug-Rueckmeldung bleibt im Zen sichtbar - sie ist dort der einzige Weg,
         // Overstudied/+XP zu sehen (Chessables eigene Anzeige liegt hinterm Backdrop).
         const keep = child === btn || child === btnRefs.refresh || child === zenNextBtn
-          || child === zenPanelBtn || child.id === FEEDBACK_ID;
+          || child === zenPanelBtn || child.id === FEEDBACK_ID || child.id === POOL_ID;
         child.style.display = keep ? '' : 'none';
       }
     } else {
@@ -820,6 +867,17 @@
       display: 'flex',
       gap: '8px',
     });
+
+    // Rest-Zaehler des Trainingspools. Im Zen-Modus ist Chessables Tab-Leiste verdeckt —
+    // deshalb spiegeln wir die Zahl hierher.
+    const poolBadge = document.createElement('span');
+    poolBadge.id = POOL_ID;
+    Object.assign(poolBadge.style, {
+      display: 'none', alignItems: 'center', padding: '6px 9px', borderRadius: '6px',
+      background: 'rgba(0,0,0,0.45)', color: '#fff', font: '12px/1 system-ui, sans-serif',
+      whiteSpace: 'nowrap', alignSelf: 'center',
+    });
+    wrap.appendChild(poolBadge);
 
     // Zug-Rückmeldung (Overstudied / +XP). Liegt in UNSERER Leiste, weil Chessables eigene
     // Anzeige in `.board-footer` sitzt — im Zen-Modus hinter dem Backdrop. Klick öffnet die
@@ -1031,6 +1089,7 @@
 
   function removeUi() {
     document.getElementById(CONTAINER_ID)?.remove();
+    if (poolTimer) { clearInterval(poolTimer); poolTimer = null; }
     feedbackObserver?.disconnect();
     feedbackObserver = null;
     watchedFeedbackRoot = null;
@@ -1044,6 +1103,10 @@
     createUi();
     initFeedbackTracker();   // Zug-Rueckmeldung mitschneiden (Overstudied / +XP)
     attachLineResetListener();
+    renderPool();
+    // Der Tab-Zaehler aendert sich auch ohne Zug (Wechsel Learn/Review, Nachladen) — ruhiger
+    // Takt statt eines weiteren Observers auf fremdem DOM.
+    if (!poolTimer) poolTimer = setInterval(renderPool, 3000);
   }
 
   if (document.body) ensureUi();
