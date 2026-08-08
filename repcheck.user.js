@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RepCheck — Opening Repertoire Deviation Checker
 // @namespace    https://github.com/kahalm/repcheck
-// @version      1.43.0
+// @version      1.44.0
 // @require      https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js
 // @description  Shows where your game deviates from your opening repertoire (chess.com + lichess, PGN files or RookHub). On chessable.com: copy/search FEN, remember a line to RookHub, show earned XP, report active training time to RookHub, read the API token.
 // @author       kahalm
@@ -867,6 +867,60 @@
     ));
   }
   // <<<REPCHECK-SHARED:i18n
+
+  // ─── Shared Core: Chessable-Kursnamen ───────────────────────────────
+  // GENERIERT aus extension/lib/chessable-course-names.js via `npm run build:userscript`
+  // (build/assemble.mjs). NICHT VON HAND EDITIEREN — Logik in lib/ ändern + neu bauen.
+  // >>>REPCHECK-SHARED:chessable-course-names
+  function rcB64UrlDecode(s) {
+    s = String(s).replace(/-/g, '+').replace(/_/g, '/');
+    while (s.length % 4) s += '=';
+    return atob(s);
+  }
+
+  // uid steckt im JWT-Payload unter user.uid (wie piratechess/JwtHelper). Gibt die uid als
+  // String zurück oder null (leerer/kaputter Token, fehlende uid).
+  function rcDecodeChessableUid(token) {
+    try {
+      const parts = String(token).split('.');
+      if (parts.length < 2) return null;
+      const o = JSON.parse(rcB64UrlDecode(parts[1]));
+      const uid = o && o.user && o.user.uid;
+      return (uid != null && /^\d+$/.test(String(uid))) ? String(uid) : null;
+    } catch (e) { return null; }
+  }
+
+  // getHomeData-Antwort → { bid(string): name }. Toleriert camelCase/PascalCase-Keys und
+  // numerische/String-bids; überspringt leere Namen; kappt auf 200 Zeichen.
+  function rcParseCourseNameMap(data) {
+    const home = data && (data.homeData || data.HomeData);
+    const books = home && (home.booksList || home.BooksList);
+    if (!Array.isArray(books)) return {};
+    const map = {};
+    for (const b of books) {
+      const bid = b && (b.bid != null ? b.bid : b.Bid);
+      const name = b && (b.name != null ? b.name : b.Name);
+      if (bid != null && typeof name === 'string' && name.trim())
+        map[String(bid)] = name.trim().slice(0, 200);
+    }
+    return map;
+  }
+
+  // Navigations-/Modus-/UI-Labels, die KEIN Kursname sind. Die Falle: solche Links zeigen ebenfalls
+  // auf /course/{id}/… und verdrängten deshalb den echten Titel — gemeldet wurden „Practice Moves",
+  // „Leaderboard" oder „Kapitel 3:" als Kursname.
+  function rcIsNavLabel(txt) {
+    const t = String(txt || '').toLowerCase().trim();
+    // Eigenständige Nav-/Modus-/UI-Labels (exakter Match — echte Titel wie „Learn Chess Openings" bleiben).
+    if (/^(practice( moves)?|learn( moves)?|review|overview|variations?|move ?trainer|next|previous|prev|continue|weiter|home|leaderboard)$/.test(t)) return true;
+    // „Next/Previous chapter|variation|move|line" bzw. deutsche Entsprechungen.
+    if (/^(next|previous|prev|nächst\w*|naechst\w*|vorherig\w*|vorig\w*|letzt\w*)\b/.test(t)
+        && /(chapter|variation|move|line|kapitel|variante|zug|linie)/.test(t)) return true;
+    // Kapitel-Überschriften („Kapitel 3:", „Chapter 12") — Seitentext, kein Kurstitel.
+    if (/^(kapitel|chapter)\s*\d*\s*:?$/.test(t)) return true;
+    return false;
+  }
+  // <<<REPCHECK-SHARED:chessable-course-names
 
   // ─── Sprache ────────────────────────────────────────────────────────
   // rcTranslate/rcResolveLang stammen aus der Region oben (generiert aus
@@ -2336,8 +2390,6 @@
       queueProblemEntry(bid, entry);
     }
     window.addEventListener('pagehide', flushProblemMoves);
-    function b64urlDecode(s) { s = String(s).replace(/-/g, '+').replace(/_/g, '/'); while (s.length % 4) s += '='; return atob(s); }
-    function decodeUid(token) { try { const parts = String(token).split('.'); if (parts.length < 2) return null; const o = JSON.parse(b64urlDecode(parts[1])); const uid = o && o.user && o.user.uid; return (uid != null && /^\d+$/.test(String(uid))) ? String(uid) : null; } catch (e) { return null; } }
     function getToken() { try { return extractJwt(localStorage.getItem(lsKey)); } catch (e) { return null; } }
     function currentCourseId() {
       const m = /\/courses?\/(\d+)(?:\/|$)/.exec(location.pathname);
@@ -2421,7 +2473,7 @@
     }
     async function chessableGet(path) {
       const token = getToken(); if (!token) throw new Error('Kein Chessable-Token (eingeloggt?)');
-      const uid = decodeUid(token); if (!uid) throw new Error('Token ohne uid');
+      const uid = rcDecodeChessableUid(token); if (!uid) throw new Error('Token ohne uid');
       const sep = path.includes('?') ? '&' : '?';
       const url = `https://www.chessable.com/api/v1/${path}${sep}uid=${uid}`;
       const init = { headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' }, credentials: 'include' };
@@ -2706,27 +2758,13 @@
     const TTL = 6 * 60 * 60 * 1000; // 6 h
     let names = {}, fetchedAt = 0, fetching = null, loaded = false;
 
-    function b64urlDecode(s) {
-      s = String(s).replace(/-/g, '+').replace(/_/g, '/');
-      while (s.length % 4) s += '=';
-      return atob(s);
-    }
-    function decodeUid(token) {
-      try {
-        const parts = String(token).split('.');
-        if (parts.length < 2) return null;
-        const o = JSON.parse(b64urlDecode(parts[1]));
-        const uid = o && o.user && o.user.uid;
-        return (uid != null && /^\d+$/.test(String(uid))) ? String(uid) : null;
-      } catch (e) { return null; }
-    }
     function readToken() {
       try { return extractJwt(localStorage.getItem(lsKey)); } catch (e) { return null; }
     }
     async function fetchMap() {
       const token = readToken();
       if (!token) return null;
-      const uid = decodeUid(token);
+      const uid = rcDecodeChessableUid(token);
       if (!uid) return null;
       try {
         const resp = await fetch(
@@ -2734,16 +2772,7 @@
           { headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' }, credentials: 'include' });
         if (!resp.ok) return null;
         const data = await resp.json();
-        const home = data && (data.homeData || data.HomeData);
-        const books = home && (home.booksList || home.BooksList);
-        if (!Array.isArray(books)) return null;
-        const map = {};
-        for (const b of books) {
-          const bid = b && (b.bid != null ? b.bid : b.Bid);
-          const name = b && (b.name != null ? b.name : b.Name);
-          if (bid != null && typeof name === 'string' && name.trim())
-            map[String(bid)] = name.trim().slice(0, 200);
-        }
+        const map = rcParseCourseNameMap(data);
         return Object.keys(map).length ? map : null;
       } catch (e) { return null; }
     }
@@ -2936,20 +2965,8 @@
     // (z. B. „Practice Moves", „Learn Moves", „Review", „nächstes Kapitel", „Previous variation").
     // Diese Links/Labels zeigen ebenfalls auf /course/{id}/… bzw. beschriften den Modus und haben
     // sonst den echten Titel verdrängt (Beispiel: gemeldeter Kursname „Practice Moves"/„Learn Moves").
-    // Spiegel von lib/chessable-course-names.js `isNavLabel` — bei Änderungen dort UND in
-    // chessable-activity.js/chessable-fen.js nachziehen (diese Kopie hing zurück und meldete
-    // „Leaderboard"/„Kapitel N" weiterhin als Kursname).
-    function isNavLabel(txt) {
-      const t = String(txt || '').toLowerCase().trim();
-      // Eigenständige Nav-/Modus-/UI-Labels (exakter Match — echte Titel wie „Learn Chess Openings" bleiben).
-      if (/^(practice( moves)?|learn( moves)?|review|overview|variations?|move ?trainer|next|previous|prev|continue|weiter|home|leaderboard)$/.test(t)) return true;
-      // „Next/Previous chapter|variation|move|line" bzw. deutsche Entsprechungen.
-      if (/^(next|previous|prev|nächst\w*|naechst\w*|vorherig\w*|vorig\w*|letzt\w*)\b/.test(t)
-          && /(chapter|variation|move|line|kapitel|variante|zug|linie)/.test(t)) return true;
-      // Kapitel-Überschriften („Kapitel 3:", „Chapter 12") — Seitentext, kein Kurstitel.
-      if (/^(kapitel|chapter)\s*\d*\s*:?$/.test(t)) return true;
-      return false;
-    }
+    // Die Liste steht in der generierten Shared-Region oben (`rcIsNavLabel`, Quelle
+    // extension/lib/chessable-course-names.js) — hier gibt es bewusst KEINE eigene Kopie mehr.
 
     // Kursname aus den React-Fiber-Props (autoritativ, gleiche Quelle wie die verlässliche Kurs-ID):
     // das `course`-Objekt trägt neben `id` auch `name`/`title`. Robuster als Seitentext, der im
@@ -2964,7 +2981,7 @@
       for (const c of candidates) {
         if (typeof c !== 'string') continue;
         const t = c.replace(/\s+/g, ' ').trim();
-        if (t && t.length <= 200 && !isNavLabel(t)) return t;
+        if (t && t.length <= 200 && !rcIsNavLabel(t)) return t;
       }
       return null;
     }
@@ -2984,7 +3001,7 @@
         const candidates = [];
         for (const a of document.querySelectorAll('a[href*="/course/' + id + '/"]')) {
           const txt = (a.textContent || '').replace(/\s+/g, ' ').trim();
-          if (txt && txt.length <= 200 && !isNavLabel(txt)) candidates.push(txt);
+          if (txt && txt.length <= 200 && !rcIsNavLabel(txt)) candidates.push(txt);
         }
         // Kurstitel ist i. d. R. der längste, beschreibende Linktext (Nav-Labels sind raus).
         if (candidates.length) return candidates.sort((a, b) => b.length - a.length)[0];
@@ -2993,7 +3010,7 @@
       // Auch der Seitentitel kann ein Nav-Label sein („Leaderboard | Chessable") — sonst landet
       // der als courseName in training-activity/remember-line (gleiche Regel wie in
       // chessable-activity.js).
-      return (t && !isNavLabel(t)) ? t : null;
+      return (t && !rcIsNavLabel(t)) ? t : null;
     }
 
     // Bester verfügbarer Kursname: Chessable-API (autoritativ, via Bearer) > DOM-Heuristik.
@@ -3387,7 +3404,15 @@
 
       const lesen = () => {
         const notifEl = root.querySelector('[data-testid="moveNotification"]') || root;
-        const text = (root.textContent || '').replace(/\u00a0/g, ' ').trim();
+        // Text GEZIELT zusammensetzen statt `root.textContent` zu nehmen: beim schnellen Ziehen
+        // steht kurz eine ZWEITE `.current-points`-Span im DOM, und der Gesamttext las sich dann
+        // als „+70 +70 XP" (gemeldet 08.08.). Der BETRAG war nie betroffen — der kommt aus dem
+        // ersten Treffer von `querySelector`, weshalb die Summe stimmte. Nur die Anzeige war schief.
+        const punkteEl = root.querySelector('.current-points');
+        const sauber = (n) => (n ? (n.textContent || '') : '').replace(/\u00a0/g, ' ').trim();
+        const punkteTxt = sauber(punkteEl);
+        const meldungTxt = sauber(notifEl);
+        const text = (punkteTxt ? punkteTxt + ' ' : '') + meldungTxt;
         // Leerlauf zwischen zwei Zuegen: Marken loeschen, damit die naechste Meldung zaehlt.
         if (!text) { letzterFeedbackText = ''; letzterFeedbackNode = null; return; }
 
@@ -3422,8 +3447,7 @@
         letzterFeedbackText = text;
         letzterFeedbackNode = notifEl;
         letzterFeedbackPly = ply;
-        const points = root.querySelector('.current-points');
-        const xp = parseXp(points && points.textContent, text);
+        const xp = parseXp(punkteTxt, text);
         lineFeedback.push({ text, xp, kind: feedbackKind(root) });
         renderFeedback();
         renderPool();

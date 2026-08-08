@@ -35,6 +35,13 @@ const REGIONEN = [
     to: '// Node/CommonJS-Export',
     indent: '  ',
   },
+  {
+    name: 'chessable-course-names',
+    lib: 'extension/lib/chessable-course-names.js',
+    from: 'function rcB64UrlDecode',
+    to: '// Node/CommonJS-Export',
+    indent: '  ',
+  },
 ];
 
 let user = readFileSync(USER, 'utf8');

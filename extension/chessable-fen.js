@@ -374,7 +374,15 @@
 
     const lesen = () => {
       const notifEl = root.querySelector('[data-testid="moveNotification"]') || root;
-      const text = (root.textContent || '').replace(/\u00a0/g, ' ').trim();
+      // Text GEZIELT zusammensetzen statt `root.textContent` zu nehmen: beim schnellen Ziehen
+      // steht kurz eine ZWEITE `.current-points`-Span im DOM, und der Gesamttext las sich dann
+      // als „+70 +70 XP" (gemeldet 08.08.). Der BETRAG war nie betroffen — der kommt aus dem
+      // ersten Treffer von `querySelector`, weshalb die Summe stimmte. Nur die Anzeige war schief.
+      const punkteEl = root.querySelector('.current-points');
+      const sauber = (n) => (n ? (n.textContent || '') : '').replace(/\u00a0/g, ' ').trim();
+      const punkteTxt = sauber(punkteEl);
+      const meldungTxt = sauber(notifEl);
+      const text = (punkteTxt ? punkteTxt + ' ' : '') + meldungTxt;
       // Leerlauf zwischen zwei Zuegen: Marken loeschen, damit die naechste Meldung zaehlt.
       if (!text) { letzterFeedbackText = ''; letzterFeedbackNode = null; return; }
 
@@ -409,8 +417,7 @@
       letzterFeedbackText = text;
       letzterFeedbackNode = notifEl;
       letzterFeedbackPly = ply;
-      const points = root.querySelector('.current-points');
-      const xp = parseXp(points && points.textContent, text);
+      const xp = parseXp(punkteTxt, text);
       lineFeedback.push({ text, xp, kind: feedbackKind(root) });
       renderFeedback();
       renderPool();
@@ -1125,19 +1132,13 @@
   // (z. B. „Practice Moves", „Learn Moves", „Review", „nächstes Kapitel", „Previous variation").
   // Diese Links/Labels zeigen ebenfalls auf /course/{id}/… bzw. beschriften den Modus und haben
   // sonst den echten Titel verdrängt (Beispiel: gemeldeter Kursname „Practice Moves"/„Learn Moves").
-  // Spiegel von lib/chessable-course-names.js `isNavLabel` — bei Änderungen dort UND in
-  // chessable-activity.js/repcheck.user.js nachziehen (diese Kopie hing zurück und ließ
-  // „Leaderboard"/„Kapitel N" als Kursname durch).
+  // Keine eigene Kopie mehr: die Liste kommt aus lib/chessable-course-names.js, die das Manifest
+  // in DIESER (MAIN-)World vor chessable-fen.js lädt — die frühere Kopie hier hing zurück und
+  // ließ „Leaderboard"/„Kapitel N" als Kursname durch. Fehlt die Datei, wird nicht gefiltert
+  // (kein Absturz der FEN-Tools); die isolierte Welt filtert den gebridgeten Namen ohnehin nochmal.
+  const CourseNames = self.RepCheckCourseNames || {};
   function isNavLabel(txt) {
-    const t = String(txt || '').toLowerCase().trim();
-    // Eigenständige Nav-/Modus-/UI-Labels (exakter Match — echte Titel wie „Learn Chess Openings" bleiben).
-    if (/^(practice( moves)?|learn( moves)?|review|overview|variations?|move ?trainer|next|previous|prev|continue|weiter|home|leaderboard)$/.test(t)) return true;
-    // „Next/Previous chapter|variation|move|line" bzw. deutsche Entsprechungen.
-    if (/^(next|previous|prev|nächst\w*|naechst\w*|vorherig\w*|vorig\w*|letzt\w*)\b/.test(t)
-        && /(chapter|variation|move|line|kapitel|variante|zug|linie)/.test(t)) return true;
-    // Kapitel-Überschriften („Kapitel 3:", „Chapter 12") — Seitentext, kein Kurstitel.
-    if (/^(kapitel|chapter)\s*\d*\s*:?$/.test(t)) return true;
-    return false;
+    return typeof CourseNames.isNavLabel === 'function' ? CourseNames.isNavLabel(txt) : false;
   }
 
   // Kursname aus den React-Fiber-Props (autoritativ, gleiche Quelle wie die verlässliche Kurs-ID):

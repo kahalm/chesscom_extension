@@ -225,16 +225,14 @@
     bridgedCourseName = (typeof name === 'string' && name.trim()) ? name.trim().slice(0, 200) : null;
   });
 
-  // Navigations-/Modus-Labels, die KEIN Kursname sind (füllten historisch die Statistik mit
-  // „Practice Moves"/„Learn Moves"-Müll). Spiegel von lib/chessable-course-names.js `isNavLabel`
-  // — bei Änderungen dort UND in chessable-fen.js/repcheck.user.js nachziehen.
+  // ---- Kursnamen-Kern (geteilte Datei lib/chessable-course-names.js, per Manifest VOR dieser
+  // Datei geladen; das Popup injiziert sie bei Bedarf mit). Keine eigene Kopie mehr — die
+  // Nav-Label-Liste (füllte historisch die Statistik mit „Practice Moves"/„Leaderboard"-Müll)
+  // lief zwischen den Laufzeitdateien auseinander. Fehlt die Datei (Tab von vor dem Update),
+  // filtern/decodieren wir nicht, statt zu werfen: der Server heilt den Namen über die Kurs-ID.
+  const CourseNames = self.RepCheckCourseNames || {};
   function isNavLabel(txt) {
-    const t = String(txt || '').toLowerCase().trim();
-    if (/^(practice( moves)?|learn( moves)?|review|overview|variations?|move ?trainer|next|previous|prev|continue|weiter|home|leaderboard)$/.test(t)) return true;
-    if (/^(next|previous|prev|nächst\w*|naechst\w*|vorherig\w*|vorig\w*|letzt\w*)\b/.test(t)
-        && /(chapter|variation|move|line|kapitel|variante|zug|linie)/.test(t)) return true;
-    if (/^(kapitel|chapter)\s*\d*\s*:?$/.test(t)) return true;
-    return false;
+    return typeof CourseNames.isNavLabel === 'function' ? CourseNames.isNavLabel(txt) : false;
   }
 
   // Lesbarer Kursname (Fallback, falls die MAIN-World-Bridge noch nichts gespiegelt hat).
@@ -269,21 +267,10 @@
   let apiNamesFetching = null;  // in-flight Promise (dedupe)
   let apiNamesLoaded = false;   // persistierten Cache erst einmal laden
 
-  function b64urlDecode(s) {
-    s = String(s).replace(/-/g, '+').replace(/_/g, '/');
-    while (s.length % 4) s += '=';
-    return atob(s);
-  }
-
-  // uid steckt im JWT-Payload unter user.uid (wie piratechess/JwtHelper).
+  // uid steckt im JWT-Payload unter user.uid (wie piratechess/JwtHelper) — aus der geteilten Lib.
   function decodeUid(token) {
-    try {
-      const parts = String(token).split('.');
-      if (parts.length < 2) return null;
-      const obj = JSON.parse(b64urlDecode(parts[1]));
-      const uid = obj && obj.user && obj.user.uid;
-      return (uid != null && /^\d+$/.test(String(uid))) ? String(uid) : null;
-    } catch (e) { return null; }
+    return typeof CourseNames.decodeChessableUid === 'function'
+      ? CourseNames.decodeChessableUid(token) : null;
   }
 
   function readChessableToken() {
@@ -306,16 +293,8 @@
         { headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' }, credentials: 'include' });
       if (!resp.ok) return null;
       const data = await resp.json();
-      const home = data && (data.homeData || data.HomeData);
-      const books = home && (home.booksList || home.BooksList);
-      if (!Array.isArray(books)) return null;
-      const map = {};
-      for (const b of books) {
-        const bid = b && (b.bid != null ? b.bid : b.Bid);
-        const name = b && (b.name != null ? b.name : b.Name);
-        if (bid != null && typeof name === 'string' && name.trim())
-          map[String(bid)] = name.trim().slice(0, 200);
-      }
+      const map = typeof CourseNames.parseCourseNameMap === 'function'
+        ? CourseNames.parseCourseNameMap(data) : {};
       return Object.keys(map).length ? map : null;
     } catch (e) { return null; }
   }

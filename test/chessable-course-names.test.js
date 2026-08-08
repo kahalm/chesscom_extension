@@ -4,8 +4,14 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { decodeChessableUid, parseCourseNameMap, isNavLabel } =
-  require('../extension/lib/chessable-course-names.js');
+const {
+  rcDecodeChessableUid: decodeChessableUid,
+  rcParseCourseNameMap: parseCourseNameMap,
+  rcIsNavLabel: isNavLabel,
+} = require('../extension/lib/chessable-course-names.js');
+
+const ROOT = path.join(__dirname, '..');
+const lies = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
 // Baut einen JWT (nur Payload zählt) mit base64url-kodiertem JSON.
 function jwt(payloadObj) {
@@ -91,17 +97,85 @@ test('isNavLabel lässt echte Kurstitel durch', () => {
   assert.strictEqual(isNavLabel(null), false);
 });
 
-// Drift-Guard: die drei Laufzeit-Kopien von isNavLabel (Extension-Activity/-Fen + Userscript)
-// hingen schon einmal hinter der Lib zurück und meldeten weiter „Leaderboard"/„Kapitel N" als
-// Kursname. Der Test prüft, dass die beiden zuletzt ergänzten Muster überall vorhanden sind.
-test('isNavLabel-Kopien in Extension und Userscript sind synchron', () => {
-  const root = path.join(__dirname, '..');
-  for (const rel of ['extension/chessable-activity.js', 'extension/chessable-fen.js', 'repcheck.user.js']) {
-    const src = fs.readFileSync(path.join(root, rel), 'utf8');
-    const i = src.indexOf('function isNavLabel');
-    assert.ok(i > 0, rel + ': isNavLabel fehlt');
-    const body = src.slice(i, i + 1200);
-    assert.ok(body.includes('|leaderboard)$'), rel + ': leaderboard-Filter fehlt');
-    assert.ok(body.includes('^(kapitel|chapter)\\s*\\d*\\s*:?$'), rel + ': Kapitel-Filter fehlt');
+// ─── Auslieferung: die getestete Lib IST der Laufzeit-Code ──────────────────────────────
+//
+// Früher standen hier Drift-Guards: die Lib war eine reine Spiegel-Datei, ausgeführt wurden
+// drei hand-gepflegte Kopien von isNavLabel (chessable-activity.js, chessable-fen.js,
+// repcheck.user.js) — die prompt auseinanderliefen. Seit der Umstellung gibt es keine Kopien
+// mehr; die folgenden Tests belegen stattdessen, dass die Lib tatsächlich ausgeliefert und
+// benutzt wird. Ohne Manifest-Eintrag bzw. mit einer wiederauferstandenen Inline-Kopie
+// schlagen sie fehl.
+
+// Erkennungszeichen einer eigenen Kopie: das Nav-Label-Regex. Steht es außerhalb der Lib bzw.
+// außerhalb der generierten Userscript-Region, hat sich jemand wieder eine Kopie gebaut.
+const KOPIE_MARKER = 'practice( moves)?';
+
+test('manifest.json liefert lib/chessable-course-names.js in BEIDEN Welten aus', () => {
+  const manifest = JSON.parse(lies('extension/manifest.json'));
+  const LIB = 'lib/chessable-course-names.js';
+  for (const konsument of ['chessable-activity.js', 'chessable-fen.js']) {
+    const eintrag = manifest.content_scripts.find((cs) => (cs.js || []).includes(konsument));
+    assert.ok(eintrag, `kein content_scripts-Eintrag für ${konsument}`);
+    const iLib = eintrag.js.indexOf(LIB);
+    assert.ok(iLib >= 0, `${konsument}: ${LIB} fehlt im content_scripts-Eintrag`);
+    assert.ok(iLib < eintrag.js.indexOf(konsument),
+      `${konsument}: ${LIB} muss VOR der Datei geladen werden (self.RepCheckCourseNames)`);
   }
+  // chessable-fen.js läuft in der MAIN-World — die Lib muss dort mitgeladen werden, ein
+  // Eintrag in der isolierten Welt reicht nicht (getrennte globale Scopes).
+  const fenEintrag = manifest.content_scripts.find((cs) => (cs.js || []).includes('chessable-fen.js'));
+  assert.strictEqual(fenEintrag.world, 'MAIN');
+});
+
+test('das Popup injiziert die Lib beim Nachladen von chessable-activity.js mit', () => {
+  // Fallback-Pfad für Tabs, die vor dem Extension-Update geladen wurden: ohne die Lib liefe
+  // chessable-activity.js dort ohne Nav-Label-Filter/uid-Decode.
+  const popup = lies('extension/popup.js');
+  const zeile = popup.split('\n').find((l) => l.includes('executeScript') && l.includes('chessable-activity.js'));
+  assert.ok(zeile, 'kein executeScript-Aufruf für chessable-activity.js gefunden');
+  assert.ok(zeile.includes('lib/chessable-course-names.js'),
+    'lib/chessable-course-names.js fehlt in der Nachlade-Liste des Popups');
+});
+
+test('die Extension-Laufzeitdateien benutzen die Lib statt eigener Definitionen', () => {
+  for (const rel of ['extension/chessable-activity.js', 'extension/chessable-fen.js']) {
+    const src = lies(rel);
+    assert.ok(src.includes('self.RepCheckCourseNames'),
+      `${rel}: bezieht die Kursnamen-Helfer nicht über self.RepCheckCourseNames`);
+    assert.ok(!src.includes(KOPIE_MARKER),
+      `${rel}: enthält wieder eine eigene isNavLabel-Kopie`);
+  }
+  // Der uid-Decode lag ebenfalls doppelt vor (JWT-Payload-Parsing).
+  const activity = lies('extension/chessable-activity.js');
+  assert.ok(!/function b64urlDecode/.test(activity),
+    'chessable-activity.js: eigener base64url-Decoder ist wieder da');
+  assert.ok(activity.includes('CourseNames.decodeChessableUid'),
+    'chessable-activity.js: decodiert die uid nicht über die Lib');
+  assert.ok(activity.includes('CourseNames.parseCourseNameMap'),
+    'chessable-activity.js: parst getHomeData nicht über die Lib');
+});
+
+test('das Userscript hat die Lib generiert eingebettet und keine Kopie daneben', () => {
+  const user = lies('repcheck.user.js');
+  const von = user.indexOf('// >>>REPCHECK-SHARED:chessable-course-names');
+  const bis = user.indexOf('// <<<REPCHECK-SHARED:chessable-course-names');
+  assert.ok(von >= 0 && bis > von, 'Sentinel-Marker für chessable-course-names fehlen');
+  const region = user.slice(von, bis);
+
+  // Die Region muss den Kern der Lib enthalten — sonst lief `npm run build:userscript` nicht.
+  const lib = lies('extension/lib/chessable-course-names.js');
+  const kern = lib.slice(lib.indexOf('function rcB64UrlDecode'), lib.indexOf('// Node/CommonJS-Export')).trimEnd();
+  for (const zeile of kern.split('\n').filter((l) => l.trim())) {
+    assert.ok(region.includes(zeile.trim()),
+      `Zeile fehlt in der generierten Region (npm run build:userscript vergessen?): ${zeile.trim()}`);
+  }
+
+  // Und außerhalb der Region darf es keine zweite Fassung geben.
+  const davor = user.slice(0, von);
+  const danach = user.slice(bis);
+  assert.ok(!davor.includes(KOPIE_MARKER) && !danach.includes(KOPIE_MARKER),
+    'repcheck.user.js: isNavLabel-Kopie außerhalb der generierten Region');
+  assert.ok(!danach.includes('function decodeUid'),
+    'repcheck.user.js: eigener uid-Decoder außerhalb der generierten Region');
+  assert.ok(user.includes('rcIsNavLabel('), 'repcheck.user.js: benutzt rcIsNavLabel nicht');
 });

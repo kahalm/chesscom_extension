@@ -15,7 +15,6 @@ module.exports = {
   ignoreFiles: [
     'web-ext-config.cjs',
     'generate-icons.py',
-    'lib/chessable-course-names.js', // noch reiner Test-Spiegel (nicht ausgeliefert); repertoire-text.js IST Content-Script
     '**/*.mjs',        // Dev/CI-Helfer (CWS-OAuth) — NICHT ins Add-on bundeln
     '**/*.ps1',        // Dev-Test-Skript
     'web-ext-artifacts/**', // alte Build-ZIPs nicht ins neue ZIP packen

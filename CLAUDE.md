@@ -20,6 +20,10 @@ Dieses Repo liefert **zwei** Varianten derselben Funktionalität, die parallel g
 **Shared Core (seit v1.20.0, single-sourced seit v1.21.0):** die reinen Text-/PGN-/FEN-Helfer (`tokenizePgn`, `isMoveToken`, `parseMoveTokens`, `parsePgnText`, `normalizedFen`, `chessComPlayedAt`, `chessableSearchUrl`) leben in EINER Quelle: `extension/lib/repertoire-text.js` (Node-getestet).
 - **Extension**: lädt die Datei als eigenes Content-Script VOR `content.js` (Manifest `content_scripts` + Popup-`executeScript`) und bezieht die Helfer über `self.RepCheckLib`; `content.js` hat keine Inline-Kopien.
 - **Userscript**: `repcheck.user.js` kann keine separate Datei laden → der Build-Schritt **`build/assemble.mjs`** (`npm run build:userscript`) fügt die Funktionen aus `lib/repertoire-text.js` zwischen den Sentinel-Markern `>>>REPCHECK-SHARED:repertoire-text` … `<<<` ein. Die Region ist **generiert — NICHT von Hand editieren**.
+**Weitere geteilte Dateien nach demselben Muster** (je ein Eintrag in `REGIONEN` in `build/assemble.mjs` + ein Marker-Paar im Userscript):
+- `lib/i18n.js` → `self.RepCheckI18n`, Region `>>>REPCHECK-SHARED:i18n` (siehe „Oberflächensprache").
+- `lib/chessable-course-names.js` → `self.RepCheckCourseNames`, Region `>>>REPCHECK-SHARED:chessable-course-names`. Wird auf chessable.com in **beiden** Welten geladen (isoliert vor `chessable-activity.js`, MAIN vor `chessable-fen.js`) und vom Popup beim Nachinjizieren mitgegeben. Deshalb tragen die Funktionen `rc`-Präfixe: in der MAIN-World landen Top-Level-Deklarationen im `window` der Seite. Die früheren drei Inline-Kopien von `isNavLabel` sind weg; `test/chessable-course-names.test.js` prüft Manifest-Auslieferung, Lib-Nutzung und die generierte Userscript-Region.
+
 - **Workflow bei Logik-Änderung an diesen Helfern**: nur `lib/repertoire-text.js` ändern → `npm test` → `npm run build:userscript` → beide Distributionen sind synchron. Der Rest der Hauptlogik (Position-Set/Analyse/Adapter/UI) ist weiterhin zwischen `content.js` und Userscript hand-gepflegt (siehe unten).
 
 Wenn du an der übrigen Hauptlogik etwas änderst:
@@ -195,8 +199,9 @@ liegenden JWT (`chessableToken`) und ruft **same-origin** Chessables `getHomeDat
 (`homeData.booksList[]` → `bid→Name`-Karte, in `chrome.storage.local`/GM-Storage gecacht, TTL 6 h).
 Same-origin auf chessable.com → keine CORS-/Cloudflare-Hürde, der Bearer verlässt den Browser
 nicht (Anfrage geht an chessable.com). Fehlt der Name (kein Token/Miss), löst ihn der Server aus
-dem beim User hinterlegten Bearer auf. Reine Bausteine (uid-Decode, Map-Parsing) gespiegelt in
-`extension/lib/chessable-course-names.js` (Node-Test `test/chessable-course-names.test.js`). Egress wie beim
+dem beim User hinterlegten Bearer auf. Die reinen Bausteine (uid-Decode, Map-Parsing, Nav-Label-Filter)
+stehen einmalig in `extension/lib/chessable-course-names.js` (Node-Test `test/chessable-course-names.test.js`)
+und werden ausgeliefert — nicht mehr gespiegelt (s. „Shared Core"). Egress wie beim
 Activity-Tracking: **Extension** = chessable-fen.js (MAIN-World) postet per
 `window.postMessage` zur isolierten chessable-activity.js, die mit RookHub-Config
 + Background-Worker sendet (Token bleibt aus dem Page-Kontext);
@@ -261,7 +266,7 @@ extension/
 ├── chessable-token.js    # Content-Script (isoliert) auf chessable.com: liest localStorage-JWT → chrome.storage.local
 ├── chessable-activity.js # Content-Script (isoliert) auf chessable.com: misst aktive Trainingszeit → POST an RookHub; hält zudem den Browser-Kurs-Import-Zustand (Crawl/Mitschnitt/Live/Fortschritt) + chrome.runtime.onMessage-Bridge (`{type:'rc-import'}`), gesteuert vom Popup (kein On-Page-Panel mehr; ✓/○-Marker an den Linien bleiben)
 ├── chessable-fen.js      # Content-Script (world: "MAIN") auf chessable.com: FEN-Copy/Search-Buttons + XP-Anzeige
-├── lib/chessable-course-names.js # reine Spiegel-Logik (uid-Decode + getHomeData-Parsing + isNavLabel) für Node-Tests; isNavLabel hat DREI Laufzeit-Kopien (chessable-activity.js, chessable-fen.js, repcheck.user.js) — Drift-Guard-Test in test/chessable-course-names.test.js
+├── lib/chessable-course-names.js # geteilter Kern der Kursnamen-Auflösung (uid-Decode + getHomeData-Parsing + isNavLabel), Node-getestet; wird per Manifest in BEIDEN chessable-Welten geladen (isoliert vor chessable-activity.js, MAIN vor chessable-fen.js) → `self.RepCheckCourseNames`; ins Userscript kopiert der Build (Sentinel `>>>REPCHECK-SHARED:chessable-course-names`). Keine Inline-Kopien mehr — test/chessable-course-names.test.js hält das fest
 ├── background.js       # Service-Worker, proxied RookHub-Fetches (CORS-frei)
 ├── popup.html / .js    # Toolbar-Button: Cache-Status + „Chessable-Token kopieren" + Sharebar + RookHub-Import (Browser) auf chessable.com [Ziel/Crawl/Mitschnitt/Live/Fortschritt, pollt chessable-activity.js per rc-import; Extension-only] + Chessable-Button-Einstellungen [chrome.storage.local `chessableButtons`, pro Button ein-/ausblendbar]. „Einstellungen"-Knopf: chess.com/lichess → In-Page-Panel (openSettings), sonst (chessable) → klappt die Chessable-Button-Toggles hier im Popup auf
 ├── icons/              # 16/48/128 PNG
