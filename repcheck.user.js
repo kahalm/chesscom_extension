@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RepCheck — Opening Repertoire Deviation Checker
 // @namespace    https://github.com/kahalm/repcheck
-// @version      1.42.0
+// @version      1.42.1
 // @require      https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js
 // @description  Shows where your game deviates from your opening repertoire (chess.com + lichess, PGN files or RookHub). On chessable.com: copy/search FEN, remember a line to RookHub, show earned XP, report active training time to RookHub, read the API token.
 // @author       kahalm
@@ -3396,13 +3396,17 @@
           || notifEl !== letzterFeedbackNode
           || (inhaltlich && ply != null && ply !== letzterFeedbackPly);
         if (!neu) return;
-        // Linienwechsel: innerhalb EINER Linie waechst die Halbzug-Nummer monoton in kleinen
-        // Schritten (ein eigener Zug + Antwortzug). Springt sie zurueck oder weit nach vorn, hat
-        // eine neue Linie begonnen — sonst summierte sich alles ueber die Sitzung auf. Der Klick
-        // auf „Next" ist nur noch ein Zusatzsignal: er greift nicht, wenn Chessable per Tastatur
-        // oder automatisch weiterschaltet oder der Knopf in der Kontosprache anders heisst.
+        // Linienwechsel: innerhalb EINER Linie waechst die Halbzug-Nummer in kleinen Schritten
+        // (eigener Zug + Antwortzug). Ein GROSSER Sprung — zurueck oder vorwaerts — heisst neue
+        // Linie; sonst summierte sich alles ueber die Sitzung auf.
+        //
+        // WICHTIG: ein kleiner Ruecksprung ist KEIN Linienwechsel. Chessable nimmt einen
+        // alternativen (und einen falschen) Zug zurueck, die Nummer faellt dabei um 1-2. Die
+        // erste Fassung wertete das als neue Linie und loeschte mitten in der Linie die Liste —
+        // genau das ist beim Testen aufgefallen.
+        const sprungZurueck = ply != null && letzterFeedbackPly != null && letzterFeedbackPly - ply;
         if (ply != null && letzterFeedbackPly != null
-            && (ply < letzterFeedbackPly || ply > letzterFeedbackPly + 3)) {
+            && (sprungZurueck >= 3 || ply > letzterFeedbackPly + 3)) {
           resetLineFeedback();
         }
         letzterFeedbackText = text;

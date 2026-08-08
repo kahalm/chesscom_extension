@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RepCheck Chessable-Inspector (Debug)
 // @namespace    https://github.com/kahalm/repcheck
-// @version      0.3.1
+// @version      0.4.0
 // @description  Diagnose-Werkzeug: sammelt Brett-DOM/Geometrie/Drag-Traces sowie Trainings-Zähler (DOM, React-State, Seiten-State, Netzwerk) auf chessable.com als JSON (Zwischenablage + Download). NICHT für die Stores — nur zur Fehleranalyse.
 // @match        https://www.chessable.com/*
 // @match        https://chessable.com/*
@@ -579,12 +579,29 @@
     const notifRoot = document.querySelector('[data-testid="moveNotification"]')?.parentElement
       || document.querySelector('[data-testid="moveNotification"]');
     if (notifRoot) {
-      const logNotif = () => {
-        const t = (notifRoot.textContent || '').trim();
-        const last = trace.notifications[trace.notifications.length - 1];
-        if (t && (!last || last.text !== t)) {
-          trace.notifications.push({ t: ts(), text: t.slice(0, 120), html: notifRoot.innerHTML.slice(0, 800) });
-        }
+      // JEDES Feuern protokollieren, auch bei unveraendertem Text. Die alte Fassung filterte
+      // `last.text !== t` — damit hatte der Rekorder denselben blinden Fleck wie der Tracker,
+      // den er aufklaeren soll: drei gleiche Meldungen hintereinander ergaben einen Eintrag.
+      // Die Kernfrage lautet ja gerade, OB das DOM bei einer wortgleichen Wiederholung
+      // ueberhaupt anfasst wird. Deshalb zusaetzlich die Mutations-ARTEN und die Halbzug-Nummer.
+      let notifLetzterKnoten = null;
+      const logNotif = (records) => {
+        const el = notifRoot.querySelector('[data-testid="moveNotification"]') || notifRoot;
+        const arten = records ? [...new Set(records.map((r) => r.type))] : ['(initial)'];
+        trace.notifications.push({
+          t: ts(),
+          text: (notifRoot.textContent || '').trim().slice(0, 120),
+          arten,
+          anzahlMutationen: records ? records.length : 0,
+          knotenNeu: el !== notifLetzterKnoten,       // hat React den Knoten ersetzt?
+          ply: (() => { const f = extractFenFromReact(); if (!f) return null;
+            const teile = f.trim().split(/\s+/); const zug = parseInt(teile[5], 10);
+            return Number.isFinite(zug) ? (zug - 1) * 2 + (teile[1] === 'b' ? 1 : 0) : null; })(),
+          fen: extractFenFromReact(),
+          html: notifRoot.innerHTML.slice(0, 800),
+        });
+        notifLetzterKnoten = el;
+        if (trace.notifications.length > 400) notifMo && notifMo.disconnect();
       };
       logNotif();
       notifMo = new MutationObserver(logNotif);
@@ -674,6 +691,26 @@
         if (trace.mutations.length > 3000) mo.disconnect();
       });
       mo.observe(board, { attributes: true, attributeFilter: ['style', 'class'], subtree: true });
+      // Zug-Spur: bei jeder Aenderung der Halbzug-Nummer ein Eintrag. Zeigt, ob das BRETT ein
+      // brauchbarer Ausloeser waere und wie sich ein alternativer/zurueckgenommener Zug verhaelt.
+      trace.zugSpur = [];
+      let letzterSpurPly = null;
+      const spurTimer = setInterval(() => {
+        const f = extractFenFromReact();
+        if (!f) return;
+        const teile = f.trim().split(/\s+/);
+        const zug = parseInt(teile[5], 10);
+        if (!Number.isFinite(zug)) return;
+        const ply = (zug - 1) * 2 + (teile[1] === 'b' ? 1 : 0);
+        if (ply === letzterSpurPly) return;
+        letzterSpurPly = ply;
+        const notif = document.querySelector('[data-testid="moveNotification"]');
+        trace.zugSpur.push({
+          t: ts(), ply, fen: f,
+          meldung: notif ? (notif.parentElement || notif).textContent.trim().slice(0, 80) : null,
+        });
+      }, 200);
+      trace.__spurTimer = spurTimer;
     }
 
     // Das zuletzt angefasste Figuren-Element regelmäßig vermessen (Drag-Pfad).
@@ -691,6 +728,7 @@
       if (notifMo) notifMo.disconnect();
       clearInterval(rectTimer);
       clearInterval(zaehlerTimer);
+      if (trace.__spurTimer) { clearInterval(trace.__spurTimer); delete trace.__spurTimer; }
       // Netzwerk unbedingt zurückbauen — ein hängengebliebener Wrapper würde die Seite
       // für den Rest der Sitzung belasten.
       window.fetch = origFetch;
