@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RepCheck — Opening Repertoire Deviation Checker
 // @namespace    https://github.com/kahalm/repcheck
-// @version      1.38.2
+// @version      1.39.0
 // @require      https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js
 // @description  Shows where your game deviates from your opening repertoire (chess.com + lichess, PGN files or RookHub). On chessable.com: copy/search FEN, remember a line to RookHub, show earned XP, report active training time to RookHub, read the API token.
 // @author       kahalm
@@ -2655,6 +2655,13 @@
     // board.resize() die squareSize echt neu berechnet.
     const ZEN_BACKDROP_ID = 'repcheck-zen-backdrop';
     const ZEN_STYLE_ID = 'repcheck-zen-style';
+    // Nach dem Refresh-Knopf soll der Vollbild-Eindruck erhalten bleiben. ECHTES Vollbild kann das
+    // nicht: `requestFullscreen()` verlangt eine frische Nutzer-Interaktion, ein Aufruf beim Laden
+    // wird abgelehnt. Wiederherstellbar ist aber die HALBE Miete — unser eigener Zen-Aufbau
+    // (Backdrop + großes Brett) ist reines DOM/CSS und braucht keine Geste. Der Nutzer landet
+    // dadurch wieder auf großem Brett; ein Klick auf ⛶ holt das Browser-Vollbild zurück.
+    const ZEN_RESTORE_KEY = 'repcheck_zen_restore';
+    let zenRestoreDeadline = 0;
     let zenBoard = null;
     let zenPrevStyle = '';
     let zenRescale = null;
@@ -2688,7 +2695,7 @@
       }, 60);
     }
 
-    function enterZen(btn) {
+    function enterZen(btn, skipBrowserFullscreen) {
       const board = zenTarget();
       const rect = board && board.getBoundingClientRect();
       if (!board || !rect || !rect.width) { flash(btn, 'No board found', '#c62828'); return; }
@@ -2733,8 +2740,32 @@
       // wieder aus. Nach zenRescale, damit die Brettbreite für die Spaltenbreite schon steht.
       zenPanelShow(null, true);
       window.addEventListener('resize', zenRescale);
-      if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(() => {});
+      if (!skipBrowserFullscreen) requestBrowserFullscreen();
       updateZenButton();
+    }
+
+    function requestBrowserFullscreen() {
+      if (document.documentElement.requestFullscreen) {
+        document.documentElement.requestFullscreen().catch(() => {});
+      }
+    }
+
+    /** Zen läuft, aber ohne Browser-Vollbild (nach einem Refresh wiederhergestellt). */
+    function zenWithoutBrowserFullscreen() { return zenActive() && !document.fullscreenElement; }
+
+    /** Nach dem Reload den Zen-Aufbau zurückholen — ohne Browser-Vollbild (keine Nutzergeste da).
+     *  Das Brett ist beim ersten Tick oft noch nicht im DOM, deshalb wird bis zu 15 s lang bei
+     *  jedem UI-Tick erneut versucht; danach gilt der Wunsch als verfallen. */
+    function maybeRestoreZen() {
+      let wanted = false;
+      try { wanted = sessionStorage.getItem(ZEN_RESTORE_KEY) === '1'; } catch (e) { return; }
+      if (!wanted || zenActive()) return;
+      if (!zenRestoreDeadline) zenRestoreDeadline = Date.now() + 15000;
+      const drop = () => { try { sessionStorage.removeItem(ZEN_RESTORE_KEY); } catch (e) {} };
+      if (Date.now() > zenRestoreDeadline) { drop(); return; }
+      if (!zenTarget()) return;                 // Brett noch nicht da → nächster Tick
+      drop();
+      enterZen(zenBtnRef, true);
     }
 
     function exitZen() {
@@ -2837,12 +2868,19 @@
 
     document.addEventListener('fullscreenchange', () => {
       if (!document.fullscreenElement && zenActive()) exitZen();
+      else updateZenButton();   // Vollbild BETRETEN → Knopf wechselt auf „verlassen"
     });
 
     function updateZenButton() {
       if (zenBtnRef) {
-        zenBtnRef.textContent = zenActive() ? '✕' : '⛶';
-        zenBtnRef.title = zenActive() ? 'Vollbild verlassen (Esc)' : 'Brett bildschirmfüllend (Esc beendet)';
+        // Drei Zustände: kein Zen → ⛶ (rein); Zen OHNE Browser-Vollbild (nach Refresh
+        // wiederhergestellt) → ⛶ „fortsetzen" (ein Klick holt das echte Vollbild); Zen MIT
+        // Vollbild → ✕ (raus). Ohne den mittleren Zustand käme man aus dem wiederhergestellten
+        // Aufbau nicht mehr ins Vollbild, ohne ihn erst zu verlassen.
+        const halbesVollbild = zenWithoutBrowserFullscreen();
+        zenBtnRef.textContent = (zenActive() && !halbesVollbild) ? '✕' : '⛶';
+        zenBtnRef.title = !zenActive() ? 'Brett bildschirmfüllend (Esc beendet)'
+          : halbesVollbild ? 'Vollbild fortsetzen' : 'Vollbild verlassen (Esc)';
       }
       // Im Zen-Modus bleiben Exit, Refresh und die Zen-Extras (▸/💬) sichtbar;
       // beim Verlassen wieder die normalen zeigen, Zen-Extras verstecken.
@@ -2910,6 +2948,8 @@
       refreshBtn.title = 'Seite neu laden';
       styleButton(refreshBtn, '#616161');
       refreshBtn.addEventListener('click', () => {
+        // Zen-Wunsch über den Reload retten (siehe ZEN_RESTORE_KEY).
+        try { if (zenActive()) sessionStorage.setItem(ZEN_RESTORE_KEY, '1'); } catch (e) { /* Privatmodus */ }
         // Chessable hängt im Training einen beforeunload-Handler ein („Seite verlassen?") — beim
         // bewusst geklickten Refresh ist der Dialog nur Reibung. Einmalig in der Capture-Phase
         // abfangen, bevor Chessables Handler dran ist (gleich wie in chessable-fen.js).
@@ -2930,7 +2970,13 @@
       fullscreenBtn.title = 'Brett bildschirmfüllend (Esc beendet)';
       styleButton(fullscreenBtn, '#37474f');
       Object.assign(fullscreenBtn.style, { fontSize: '15px', lineHeight: '1', padding: '8px 10px' });
-      fullscreenBtn.addEventListener('click', () => { zenActive() ? exitZen() : enterZen(fullscreenBtn); });
+      fullscreenBtn.addEventListener('click', () => {
+      if (!zenActive()) { enterZen(fullscreenBtn); return; }
+      // Wiederhergestellter Zen-Aufbau ohne Browser-Vollbild: der Klick vervollständigt ihn
+      // (jetzt liegt eine Nutzer-Interaktion vor), statt alles zu verlassen.
+      if (zenWithoutBrowserFullscreen()) { requestBrowserFullscreen(); return; }
+      exitZen();
+    });
       zenBtnRef = fullscreenBtn;
       zenRefreshBtnRef = refreshBtn;
 
@@ -3029,6 +3075,7 @@
     function ensureUi() {
       if (!isPracticeMode()) { removeUi(); return; }
       createUi();
+      maybeRestoreZen();   // Zen-Aufbau nach einem Refresh zurückholen (ohne Browser-Vollbild)
       // XP-Tracker vorerst deaktiviert (kommt später wieder):
       //   initPointsTracker(); attachNextVariationListener(); if (lastXP) updatePointsDisplay();
     }
@@ -3040,6 +3087,7 @@
     const mo = new MutationObserver(() => {
       if (!isPracticeMode()) { removeUi(); return; }
       if (!document.getElementById(CONTAINER_ID)) ensureUi();
+      else maybeRestoreZen();   // UI steht schon, Brett kommt bei Chessable oft später nach
       // initPointsTracker(); // XP-Tracker vorerst deaktiviert
     });
     mo.observe(document.documentElement, { childList: true, subtree: true });
