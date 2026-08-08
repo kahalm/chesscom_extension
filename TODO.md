@@ -45,7 +45,13 @@ Wiederkehrend (kein einmaliges TODO):
   Erst mit dem Debug-Inspector (`debug/chessable-inspector.user.js`) einen Snapshot im Normal- und
   im Zen-Modus vergleichen, dann den Layer gezielt hochziehen.
 
-- [x] **Zug-Feedback anzeigen: Overstudy vs. +XP** — ERLEDIGT v1.40.0
+- [x] **Zug-Feedback anzeigen: Overstudy vs. +XP** — ERLEDIGT v1.40.0, zwei Zählfehler behoben in
+  v1.41.1: (a) wortgleiche Meldungen hintereinander (drei „Overstudied") fielen auf EINEN Eintrag
+  zusammen — verglichen wurde nur der Text, und der Leerlauf zwischen zwei Zügen löschte die
+  Vergleichsmarke nicht; (b) beim Linienwechsel wurde nicht zurückgesetzt (Liste + Summe liefen über
+  die Sitzung weiter), weil der Reset allein an einem Klick auf einen Knopf mit passender
+  Beschriftung hing. Beides hängt jetzt an der Halbzug-Nummer der Stellung statt am Wortlaut/Klick.
+  **Noch nicht im Browser gegengeprüft** — siehe Smoke-Test-Punkt oben.
   Nach einem Zug zeigt Chessable an, ob der Zug „overstudied" war oder wieviel XP er gebracht hat.
   Das soll RepCheck ebenfalls sichtbar machen (der Nutzer sieht es im Zen-Modus sonst nicht).
   Quelle ist vermutlich `[data-testid="moveNotification"]` — genau der Knoten, den der frühere
