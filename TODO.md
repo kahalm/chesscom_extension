@@ -105,6 +105,34 @@ Was noch manuell erledigt werden muss, bevor die Extension öffentlich veröffen
   Offen zu entscheiden: ob dieser Zwischenzustand gewünscht ist oder verwirrt (Knopf zeigt dann
   „⛶", obwohl es schon fast wie Vollbild aussieht).
 
+- [ ] **Nach dem Refresh automatisch an die richtige Stelle zurückspielen** (User-Wunsch 2026-08-08)
+  Zweck des Refresh-Knopfes ist, einen Verklicker nicht als Fehler werten zu lassen — er wirft den
+  Nutzer aber an den Linienanfang zurück. Wunsch: die bereits gespielten Züge automatisch
+  nachspielen.
+  **Machbarkeit — die Bausteine sind belegt** (aus `dumps/repcheck-inspector-recording-*.json`):
+  - Feld-Elemente sind eindeutig adressierbar: die IDs beginnen mit dem Feldnamen
+    (`DIV#e4-2760-7211-…`, `DIV#d2-3e6e-…`), zusätzlich tragen sie eine `square-<feld>`-Klasse.
+  - **Klick-Klick-Eingabe funktioniert**: nach dem ersten Klick erscheinen die
+    Legalzug-Markierungen (61 `highlight-legal-mt2`-Mutationen im Mitschnitt), der zweite Klick
+    aufs Zielfeld führt den Zug aus. Ein Zug lässt sich also ohne Drag-Simulation auslösen.
+  - Dass synthetische Klicks bei Chessable ankommen, ist durch den ▸-Knopf bereits belegt (der
+    ruft `el.click()` auf Chessables eigenem „Next"-Button).
+  **Was noch offen ist (und vor dem Bauen geklärt werden MUSS):**
+  1. Serviert Chessable nach dem Reload überhaupt DIESELBE Linie? Der Move-Trainer zieht die
+     nächste fällige — kommt eine andere, dürfte NICHTS nachgespielt werden. Erkennung über die
+     Linien-/oid-Kennung bzw. die Start-FEN (Inspector v0.2.0 erfasst `progress.props`).
+  2. Nehmen die Brett-Handler synthetische Pointer-Events an (isTrusted=false)? Der ▸-Knopf beweist
+     es für React-Buttons, nicht für den Brett-Layer.
+  3. Timing: nach jedem eigenen Zug antwortet der Gegner animiert — der nächste Klick darf erst
+     nach dem Settle kommen (Brett-Mutation abwarten, nicht blind `setTimeout`).
+  **Sicherheitsregel für die Umsetzung:** vor JEDEM nachgespielten Zug die aktuelle Stellung gegen
+  die erwartete prüfen und bei Abweichung sofort abbrechen (mit sichtbarem Hinweis). Ein
+  „danebengegangener" Nachspiel-Zug wäre genau der Fehler, den der Nutzer vermeiden will — lieber
+  gar nicht nachspielen als falsch.
+  **Zu erwägen:** die Züge liegen ohnehin schon vor (RepCheck sieht jeden Zug für die
+  Trainingszeit-Messung); der `ZEN_RESTORE_KEY`-Mechanismus aus v1.39.0 ist die passende Stelle,
+  um sie über den Reload zu retten.
+
 - [ ] **Gesamt-XP am Linienende aufklappbar machen** (User-Wunsch 2026-08-08)
   Am Ende einer Linie zeigt Chessable die Gesamt-XP (in beiden Modi). Diese Summe soll klickbar
   sein und die **Einzelbeträge** zeigen, aus denen sie sich zusammensetzt. Hängt direkt am
