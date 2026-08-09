@@ -764,6 +764,7 @@
   // Zen-only-Buttons (▸ Next, 💬 Kommentar-Panel) + gehobenes Panel-Element.
   let zenNextBtn = null;
   let zenPanelBtn = null;
+  let zenAnalyseBtn = null;
   let zenPanelEl = null;
   let zenPanelPrevStyle = '';
 
@@ -815,7 +816,9 @@
     Object.assign(backdrop.style, {
       position: 'fixed', inset: '0', background: '#111', zIndex: '2147483600',
     });
-    backdrop.addEventListener('click', () => exitZen());
+    // Bewusst KEIN Klick-zum-Beenden: neben das Brett zu klicken passiert beim Training
+    // staendig (Maus parken, versehentlicher Klick nach einem Zug) — dabei aus dem Vollbild zu
+    // fliegen reisst aus der Konzentration. Raus geht es ueber ✕ oder Esc.
     document.body.appendChild(backdrop);
 
     // chessboard.js hängt die gezogene Schwebefigur an <body> — die muss ÜBER
@@ -1021,12 +1024,14 @@
         // Die Zug-Rueckmeldung bleibt im Zen sichtbar - sie ist dort der einzige Weg,
         // Overstudied/+XP zu sehen (Chessables eigene Anzeige liegt hinterm Backdrop).
         const keep = child === btn || child === btnRefs.refresh || child === zenNextBtn
-          || child === zenPanelBtn || child.id === FEEDBACK_ID || child.id === POOL_ID;
+          || child === zenPanelBtn || child === zenAnalyseBtn
+          || child.id === FEEDBACK_ID || child.id === POOL_ID;
         child.style.display = keep ? '' : 'none';
       }
     } else {
       if (zenNextBtn) zenNextBtn.style.display = 'none';
       if (zenPanelBtn) zenPanelBtn.style.display = 'none';
+      if (zenAnalyseBtn) zenAnalyseBtn.style.display = 'none';
       applyButtonSettings();
     }
   }
@@ -1094,16 +1099,18 @@
     analyseBtn.textContent = 'Analyse';
     analyseBtn.title = 'Stellung in RookHub analysieren (neuer Tab)';
     styleButton(analyseBtn, '#00695c');
-    analyseBtn.addEventListener('click', () => {
+    // Geteilt mit dem Zen-Knopf (🔬): identisches Verhalten, nur ein anderes Gehaeuse.
+    function openAnalysis(btn) {
       const fen = buildFEN();
-      if (!fen) { flash(analyseBtn, 'No board found', '#c62828'); debugDump(); return; }
-      if (!rookhubBaseUrl) { requestRookhubUrl(); flash(analyseBtn, 'Set RookHub URL', '#c62828'); return; }
+      if (!fen) { flash(btn, 'No board found', '#c62828'); debugDump(); return; }
+      if (!rookhubBaseUrl) { requestRookhubUrl(); flash(btn, 'Set RookHub URL', '#c62828'); return; }
       const orient = fen.split(' ')[1] === 'b' ? 'black' : 'white';   // Brett aus Sicht der Seite am Zug
       const url = rookhubBaseUrl.replace(/\/$/, '') + '/analysis?fen=' + encodeURIComponent(fen) + '&orientation=' + orient;
       console.log('[RepCheck Chessable Analyse]', fen, '->', url);
       const win = window.open(url, '_blank', 'noopener');
-      if (!win) flash(analyseBtn, 'Popup blocked', '#c62828');
-    });
+      if (!win) flash(btn, 'Popup blocked', '#c62828');
+    }
+    analyseBtn.addEventListener('click', () => openAnalysis(analyseBtn));
 
     const searchBtn = document.createElement('button');
     searchBtn.id = SEARCH_BTN_ID;
@@ -1157,6 +1164,18 @@
     zNext.addEventListener('click', () => clickChessableNext(zNext));
     zenNextBtn = zNext;
 
+    // Zen-only: 🔬 oeffnet die aktuelle Stellung in der RookHub-Analyse (neuer Tab) —
+    // draussen uebernimmt das der beschriftete Analyse-Knopf, im Zen gilt: nur Icons.
+    const zAnalyse = document.createElement('button');
+    zAnalyse.type = 'button';
+    zAnalyse.id = 'repcheck-zen-analyse';
+    zAnalyse.textContent = '🔬';
+    zAnalyse.title = 'Stellung in RookHub analysieren (neuer Tab)';
+    styleButton(zAnalyse, '#00695c');
+    Object.assign(zAnalyse.style, { fontSize: '15px', lineHeight: '1', padding: '8px 10px', display: 'none' });
+    zAnalyse.addEventListener('click', () => openAnalysis(zAnalyse));
+    zenAnalyseBtn = zAnalyse;
+
     const zPanel = document.createElement('button');
     zPanel.type = 'button';
     zPanel.textContent = '💬';
@@ -1174,6 +1193,7 @@
     wrap.appendChild(searchBtn);
     wrap.appendChild(refreshBtn);
     wrap.appendChild(rememberBtn);
+    wrap.appendChild(zAnalyse);
     wrap.appendChild(zPanel);
     wrap.appendChild(zNext);
     wrap.appendChild(fullscreenBtn);

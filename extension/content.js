@@ -1206,7 +1206,11 @@
       const urlInput = document.getElementById('repcheck-rookhub-url');
       const tokenInput = document.getElementById('repcheck-rookhub-token');
       if (urlInput) urlInput.value = (cfg && cfg.url) || ROOKHUB_DEFAULT_URL;
-      if (cfg && tokenInput) tokenInput.value = cfg.token || '';
+      // Der gespeicherte Token wird bewusst NICHT vorbefuellt: das Panel haengt im
+      // DOM der Seite, jedes Seiten-Skript koennte den Klartext aus dem Input lesen.
+      // Stattdessen zeigt der Platzhalter an, dass einer hinterlegt ist; leer
+      // absenden = gespeicherten Token weiterverwenden (s. Connect-Handler).
+      if (cfg && cfg.token && tokenInput) tokenInput.placeholder = t('panel.tokenSaved');
     }).catch(() => {
       const urlInput = document.getElementById('repcheck-rookhub-url');
       if (urlInput && !urlInput.value) urlInput.value = ROOKHUB_DEFAULT_URL;
@@ -1225,7 +1229,11 @@
 
     document.getElementById('repcheck-rookhub-connect')?.addEventListener('click', async () => {
       const url = (document.getElementById('repcheck-rookhub-url').value || '').trim();
-      const token = (document.getElementById('repcheck-rookhub-token').value || '').trim();
+      const typed = (document.getElementById('repcheck-rookhub-token').value || '').trim();
+      // Leeres Feld = gespeicherten Token beibehalten (er wird aus Sicherheitsgruenden
+      // nicht mehr ins Input vorbefuellt, s. Vorbefuellung oben).
+      const saved = typed ? null : await loadRookhubConfig().catch(() => null);
+      const token = typed || ((saved && saved.token) || '');
       if (!url || !token) { updateStatusText(t('status.needUrlToken')); return; }
       try {
         await saveRookhubConfig({ url, token });

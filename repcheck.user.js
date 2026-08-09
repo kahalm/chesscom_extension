@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RepCheck — Opening Repertoire Deviation Checker
 // @namespace    https://github.com/kahalm/repcheck
-// @version      1.46.0
+// @version      1.47.0
 // @require      https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js
 // @description  Shows where your game deviates from your opening repertoire (chess.com + lichess, PGN files or RookHub). On chessable.com: copy/search FEN, remember a line to RookHub, show earned XP, report active training time to RookHub, read the API token.
 // @author       kahalm
@@ -325,6 +325,7 @@
       'panel.noAccount': 'No account yet? ',
       'panel.register': 'Register at {host}',
       'panel.tokenHint': ' · then create a token under Profile → “Extension tokens”.',
+      'panel.tokenSaved': 'Token saved — leave empty to keep it',
       'panel.folder': 'Load from folder:',
       'panel.selectFolder': 'Select PGN folder',
       'panel.folderLoaded': '(loaded)',
@@ -529,6 +530,7 @@
       'panel.noAccount': 'Noch kein Konto? ',
       'panel.register': 'Auf {host} registrieren',
       'panel.tokenHint': ' · Token dann unter Profil → „Extension-Tokens“ erstellen.',
+      'panel.tokenSaved': 'Token gespeichert — leer lassen, um ihn zu behalten',
       'panel.folder': 'Aus Ordner laden:',
       'panel.selectFolder': 'PGN-Ordner wählen',
       'panel.folderLoaded': '(geladen)',
@@ -732,6 +734,7 @@
       'panel.noAccount': 'Još nemaš račun? ',
       'panel.register': 'Registriraj se na {host}',
       'panel.tokenHint': ' · zatim izradi token pod Profile → „Extension tokens“.',
+      'panel.tokenSaved': 'Token je spremljen — ostavi prazno da ga zadržiš',
       'panel.folder': 'Učitaj iz mape:',
       'panel.selectFolder': 'Odaberi PGN mapu',
       'panel.folderLoaded': '(učitano)',
@@ -2076,7 +2079,11 @@
       const urlInput = document.getElementById('repcheck-rookhub-url');
       const tokenInput = document.getElementById('repcheck-rookhub-token');
       if (urlInput) urlInput.value = (cfg && cfg.url) || ROOKHUB_DEFAULT_URL;
-      if (cfg && tokenInput) tokenInput.value = cfg.token || '';
+      // Der gespeicherte Token wird bewusst NICHT vorbefuellt: das Panel haengt im
+      // DOM der Seite, jedes Seiten-Skript koennte den Klartext aus dem Input lesen.
+      // Stattdessen zeigt der Platzhalter an, dass einer hinterlegt ist; leer
+      // absenden = gespeicherten Token weiterverwenden (s. Connect-Handler).
+      if (cfg && cfg.token && tokenInput) tokenInput.placeholder = t('panel.tokenSaved');
     }).catch(() => {
       const urlInput = document.getElementById('repcheck-rookhub-url');
       if (urlInput && !urlInput.value) urlInput.value = ROOKHUB_DEFAULT_URL;
@@ -2095,7 +2102,11 @@
 
     document.getElementById('repcheck-rookhub-connect')?.addEventListener('click', async () => {
       const url = (document.getElementById('repcheck-rookhub-url').value || '').trim();
-      const token = (document.getElementById('repcheck-rookhub-token').value || '').trim();
+      const typed = (document.getElementById('repcheck-rookhub-token').value || '').trim();
+      // Leeres Feld = gespeicherten Token beibehalten (er wird aus Sicherheitsgruenden
+      // nicht mehr ins Input vorbefuellt, s. Vorbefuellung oben).
+      const saved = typed ? null : await loadRookhubConfig().catch(() => null);
+      const token = typed || ((saved && saved.token) || '');
       if (!url || !token) { updateStatusText(t('status.needUrlToken')); return; }
       try {
         await saveRookhubConfig({ url, token });
@@ -3701,6 +3712,7 @@
     let zenRefreshBtnRef = null;
     // Zen-only-Buttons (▸ Next, 💬 Kommentar-Panel) + gehobenes Panel-Element.
     let zenNextBtnRef = null;
+    let zenAnalyseBtnRef = null;
     let zenPanelBtnRef = null;
     let zenPanelEl = null;
     let zenPanelPrevStyle = '';
@@ -3750,7 +3762,9 @@
       const backdrop = document.createElement('div');
       backdrop.id = ZEN_BACKDROP_ID;
       Object.assign(backdrop.style, { position: 'fixed', inset: '0', background: '#111', zIndex: '2147483600' });
-      backdrop.addEventListener('click', () => exitZen());
+      // Bewusst KEIN Klick-zum-Beenden: neben das Brett zu klicken passiert beim Training
+    // staendig (Maus parken, versehentlicher Klick nach einem Zug) — dabei aus dem Vollbild zu
+    // fliegen reisst aus der Konzentration. Raus geht es ueber ✕ oder Esc.
       document.body.appendChild(backdrop);
       // chessboard.js hängt die gezogene Schwebefigur an <body> — die muss ÜBER
       // das Backdrop, sonst ist die Figur während des Ziehens unsichtbar.
@@ -3945,7 +3959,7 @@
       const wrap = document.getElementById(CONTAINER_ID);
       if (!wrap) return;
       for (const child of wrap.children) {
-        const zenOnly = child === zenNextBtnRef || child === zenPanelBtnRef;
+        const zenOnly = child === zenNextBtnRef || child === zenPanelBtnRef || child === zenAnalyseBtnRef;
         // Die Zug-Rueckmeldung bleibt im Zen sichtbar - sie ist dort der einzige Weg,
         // Overstudied/+XP zu sehen (Chessables eigene Anzeige liegt hinterm Backdrop).
         const keep = child === zenBtnRef || child === zenRefreshBtnRef || zenOnly || child.id === FEEDBACK_ID || child.id === POOL_ID;
@@ -4148,17 +4162,19 @@
       analyseBtn.textContent = 'Analyse';
       analyseBtn.title = 'Stellung in RookHub analysieren (neuer Tab)';
       styleButton(analyseBtn, '#00695c');
-      analyseBtn.addEventListener('click', () => {
+      // Geteilt mit dem Zen-Knopf (🔬): identisches Verhalten, nur ein anderes Gehaeuse.
+      function openAnalysis(btn) {
         const fen = buildFEN();
-        if (!fen) { flash(analyseBtn, 'No board found', '#c62828'); debugDump(); return; }
+        if (!fen) { flash(btn, 'No board found', '#c62828'); debugDump(); return; }
         let cfg = null;
         try { if (typeof GM_getValue !== 'undefined') cfg = GM_getValue('rookhubConfig', null); } catch (e) {}
-        if (!cfg || !cfg.url) { flash(analyseBtn, 'Set RookHub URL', '#c62828'); return; }
+        if (!cfg || !cfg.url) { flash(btn, 'Set RookHub URL', '#c62828'); return; }
         const orient = fen.split(' ')[1] === 'b' ? 'black' : 'white';   // Brett aus Sicht der Seite am Zug
         const url = String(cfg.url).replace(/\/$/, '') + '/analysis?fen=' + encodeURIComponent(fen) + '&orientation=' + orient;
         const win = window.open(url, '_blank', 'noopener');
-        if (!win) flash(analyseBtn, 'Popup blocked', '#c62828');
-      });
+        if (!win) flash(btn, 'Popup blocked', '#c62828');
+      }
+      analyseBtn.addEventListener('click', () => openAnalysis(analyseBtn));
 
       const searchBtn = document.createElement('button');
       searchBtn.type = 'button';
@@ -4213,6 +4229,18 @@
       zNext.addEventListener('click', () => clickChessableNext(zNext));
       zenNextBtnRef = zNext;
 
+      // Zen-only: 🔬 oeffnet die aktuelle Stellung in der RookHub-Analyse (neuer Tab) —
+      // draussen uebernimmt das der beschriftete Analyse-Knopf, im Zen gilt: nur Icons.
+      const zAnalyse = document.createElement('button');
+      zAnalyse.type = 'button';
+      zAnalyse.id = 'repcheck-zen-analyse';
+      zAnalyse.textContent = '🔬';
+      zAnalyse.title = 'Stellung in RookHub analysieren (neuer Tab)';
+      styleButton(zAnalyse, '#00695c');
+      Object.assign(zAnalyse.style, { fontSize: '15px', lineHeight: '1', padding: '8px 10px', display: 'none' });
+      zAnalyse.addEventListener('click', () => openAnalysis(zAnalyse));
+      zenAnalyseBtnRef = zAnalyse;
+
       const zPanel = document.createElement('button');
       zPanel.type = 'button';
       zPanel.textContent = '💬';
@@ -4229,6 +4257,7 @@
       wrap.appendChild(searchBtn);
       wrap.appendChild(refreshBtn);
       wrap.appendChild(rememberBtn);
+      wrap.appendChild(zAnalyse);
       wrap.appendChild(zPanel);
       wrap.appendChild(zNext);
       wrap.appendChild(fullscreenBtn);

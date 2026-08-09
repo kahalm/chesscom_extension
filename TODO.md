@@ -2,6 +2,21 @@
 
 Was noch manuell erledigt werden muss, bevor die Extension öffentlich veröffentlicht werden kann. Code-Seite ist fertig (siehe `extension/`, Workflows in `.github/workflows/`, MIT-Lizenz, Privacy Policy, GitHub-Pages-Setup).
 
+## Geparkt (User-Wuensche 2026-08-09, „fuer nachher")
+
+- [ ] **Hint im Zen-Vollbild** — die Tipp-Funktion auch im Vollbild erreichbar machen (nur Icon,
+  wie 🔬/💬/▸).
+- [ ] **Pool-Statistik aktualisiert nur beim Auf-/Zuklappen** — das Panel hinter dem
+  Rest-Linien-Zaehler soll sich auch bei einer NEU abgeschlossenen Linie aktualisieren, nicht nur
+  beim Schliessen und Wiederoeffnen.
+- [ ] **Statistik gesamt + je Repertoire** — zusaetzlich zur Tages-Bilanz eine Gesamt-Statistik und
+  eine je aktuellem Chessable-Kurs/Repertoire (eventuell; User sagte „eventuell").
+- [ ] **BUG: mehrere Fehlzuege wechseln faelschlich die Linie** — macht man in einer Linie mehr als
+  einen Fehlzug, wertet der XP-/Aktivitaets-Tracker das als Linienwechsel (Verdacht: die
+  Ruecksprung-Heuristik `sprungZurueck >= 3` aus v1.41.1 feuert, weil mehrere Takebacks den Ply
+  weiter zuruecksetzen). Erster Kandidat beim naechsten repcheck-Durchgang.
+
+
 ## Release-Vorbereitung — ERLEDIGT (Stand 2026-08-08)
 
 Die Extension ist in **beiden Stores live** und wird per Tag automatisch eingereicht; die

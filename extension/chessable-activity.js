@@ -315,6 +315,14 @@
     });
   }
 
+  // 401 von der Chessable-API = der Bearer ist serverseitig tot (Logout/Ablauf):
+  // die in chrome.storage.local liegende Kopie loeschen, damit sie den Logout
+  // nicht ueberlebt. Nach erneutem Login legt chessable-token.js automatisch
+  // den frischen Token nach (Load/Fokus/storage-Event).
+  function clearStoredChessableToken() {
+    try { chrome.storage.local.remove('chessableToken'); } catch (e) { /* storage nicht verfuegbar — ignorieren */ }
+  }
+
   async function fetchCourseNameMap() {
     const token = await readChessableToken();
     if (!token) return null;
@@ -324,6 +332,7 @@
       const resp = await fetch(
         `https://www.chessable.com/api/v1/getHomeData?uid=${uid}&sortBookRowsBy=alphabetically&userLanguageShort=en`,
         { headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' }, credentials: 'include' });
+      if (resp.status === 401) clearStoredChessableToken();
       if (!resp.ok) return null;
       const data = await resp.json();
       const map = typeof CourseNames.parseCourseNameMap === 'function'
@@ -826,6 +835,7 @@
     for (let attempt = 1; attempt <= CHESSABLE_MAX_ATTEMPTS; attempt++) {
       const resp = await fetch(url, init);
       if (resp.ok) return resp.text();
+      if (resp.status === 401) clearStoredChessableToken(); // Bearer tot — Kopie nicht weiterleben lassen
       lastStatus = resp.status;
       if (!CHESSABLE_RETRYABLE.has(resp.status) || attempt === CHESSABLE_MAX_ATTEMPTS) break;
       const retryAfter = parseRetryAfterMs(resp.headers.get('Retry-After'));
