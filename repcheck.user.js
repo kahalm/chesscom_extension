@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RepCheck — Opening Repertoire Deviation Checker
 // @namespace    https://github.com/kahalm/repcheck
-// @version      1.47.0
+// @version      1.48.0
 // @require      https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js
 // @description  Shows where your game deviates from your opening repertoire (chess.com + lichess, PGN files or RookHub). On chessable.com: copy/search FEN, remember a line to RookHub, show earned XP, report active training time to RookHub, read the API token.
 // @author       kahalm
@@ -3431,6 +3431,11 @@
     const FEEDBACK_LIST_ID = 'repcheck-chessable-feedback-list';
     /** Einträge der laufenden Linie: { text, xp, zeit }. Wird beim Linienwechsel geleert. */
     let lineFeedback = [];
+    // Halbzuege, an denen in DIESER Linie ein Fehler passierte (wrong/giveup/timeup). Grund:
+    // bei >= 2 Fehlzuegen laesst Chessable am Linienende die verpatzten Zuege WIEDERHOLEN und
+    // springt dafuer zum jeweiligen Fehler zurueck/vor — ohne dieses Gedaechtnis sah der grosse
+    // Sprung wie eine neue Linie aus und der Zaehler setzte mitten in der Linie zurueck.
+    let lineFehlerPlys = [];
     let feedbackObserver = null;
     let watchedFeedbackRoot = null;
     /** Zuletzt gelesene Meldung: Wortlaut, tragender Knoten und Halbzug-Nummer des Bretts.
@@ -3530,7 +3535,10 @@
         // WICHTIG: ein kleiner Ruecksprung ist KEIN Linienwechsel. Chessable nimmt einen
         // alternativen (und einen falschen) Zug zurueck, die Nummer faellt dabei um 1-2.
         const sprungZurueck = ply != null && letzterFeedbackPly != null && letzterFeedbackPly - ply;
-        if (ply != null && letzterFeedbackPly != null
+        // Landet der Sprung bei (oder direkt neben) einem gemerkten Fehler-Halbzug, ist das
+        // Chessables Wiederholungsphase („play the moves you missed") — DIESELBE Linie.
+        const wiederholung = ply != null && lineFehlerPlys.some((f) => Math.abs(f - ply) <= 1);
+        if (ply != null && letzterFeedbackPly != null && !wiederholung
             && (sprungZurueck >= 3 || ply > letzterFeedbackPly + 3)) {
           resetLineFeedback();
           letzterFeedbackZeit = jetzt;   // resetLineFeedback nullt die Marken
@@ -3539,7 +3547,12 @@
         letzterFeedbackNode = notifEl;
         letzterFeedbackPly = ply;
         const xp = parseXp(punkteTxt, text);
-        lineFeedback.push({ text, xp, kind: feedbackKind(root) });
+        const kind = feedbackKind(root);
+        const istFehler = (typeof rcFeedbackIsFehler === 'function')
+          ? rcFeedbackIsFehler(kind)
+          : (self.RepCheckFeedback && self.RepCheckFeedback.isFehler ? self.RepCheckFeedback.isFehler(kind) : false);
+        if (istFehler && ply != null) lineFehlerPlys.push(ply);
+        lineFeedback.push({ text, xp, kind });
         renderFeedback();
         renderPool();
       };
@@ -3638,6 +3651,7 @@
 
     function resetLineFeedback() {
       lineFeedback = [];
+      lineFehlerPlys = [];
       letzterFeedbackText = '';
       letzterFeedbackNode = null;
       letzterFeedbackPly = null;
@@ -3713,6 +3727,7 @@
     // Zen-only-Buttons (▸ Next, 💬 Kommentar-Panel) + gehobenes Panel-Element.
     let zenNextBtnRef = null;
     let zenAnalyseBtnRef = null;
+    let zenHintBtnRef = null;
     let zenPanelBtnRef = null;
     let zenPanelEl = null;
     let zenPanelPrevStyle = '';
@@ -3857,7 +3872,21 @@
     // Chessables eigener „Next"-Knopf liegt im Zen-Modus hinterm Backdrop —
     // der ▸-Button sucht ihn per Text und klickt ihn programmatisch (React
     // bekommt ein echtes click-Event, Sichtbarkeit spielt dafür keine Rolle).
-    function clickChessableNext(btn) {
+    // Chessables eigener „Hint"-Knopf — im Zen ebenfalls hinterm Backdrop. Gleiche
+  // Suche wie beim Next: per Text, klick programmatisch (React braucht keine Sichtbarkeit).
+  function clickChessableHint(btn) {
+    const cand = [...document.querySelectorAll('button, a, [role="button"]')].find((el) => {
+      if (el.closest('#' + CONTAINER_ID)) return false;
+      const t = (el.textContent || '').trim();
+      if (!/^(hint|tipp)$/i.test(t)) return false;
+      const r = el.getBoundingClientRect();
+      return r.width > 0 && r.height > 0;
+    });
+    if (cand) cand.click();
+    else flash(btn, 'Kein „Hint" da', '#c62828');
+  }
+
+  function clickChessableNext(btn) {
       const cand = [...document.querySelectorAll('button, a, [role="button"]')].find((el) => {
         if (el.closest('#' + CONTAINER_ID)) return false;
         const t = (el.textContent || '').trim();
@@ -3958,8 +3987,14 @@
       // beim Verlassen wieder die normalen zeigen, Zen-Extras verstecken.
       const wrap = document.getElementById(CONTAINER_ID);
       if (!wrap) return;
+      // Refresh traegt im Zen nur das Icon — Beschriftungen haben dort nichts verloren.
+      if (zenRefreshBtnRef) {
+        zenRefreshBtnRef.textContent = zenActive() ? '⟳' : 'Refresh';
+        if (zenActive()) Object.assign(zenRefreshBtnRef.style, { fontSize: '15px', lineHeight: '1', padding: '8px 10px' });
+        else Object.assign(zenRefreshBtnRef.style, { fontSize: '', lineHeight: '', padding: '' });
+      }
       for (const child of wrap.children) {
-        const zenOnly = child === zenNextBtnRef || child === zenPanelBtnRef || child === zenAnalyseBtnRef;
+        const zenOnly = child === zenNextBtnRef || child === zenPanelBtnRef || child === zenAnalyseBtnRef || child === zenHintBtnRef;
         // Die Zug-Rueckmeldung bleibt im Zen sichtbar - sie ist dort der einzige Weg,
         // Overstudied/+XP zu sehen (Chessables eigene Anzeige liegt hinterm Backdrop).
         const keep = child === zenBtnRef || child === zenRefreshBtnRef || zenOnly || child.id === FEEDBACK_ID || child.id === POOL_ID;
@@ -4229,6 +4264,17 @@
       zNext.addEventListener('click', () => clickChessableNext(zNext));
       zenNextBtnRef = zNext;
 
+      // Zen-only: 💡 klickt Chessables eigenen Hint-Knopf (liegt hinterm Backdrop).
+      const zHint = document.createElement('button');
+      zHint.type = 'button';
+      zHint.id = 'repcheck-zen-hint';
+      zHint.textContent = '💡';
+      zHint.title = 'Hint (Chessable-Tipp)';
+      styleButton(zHint, '#f9a825');
+      Object.assign(zHint.style, { fontSize: '15px', lineHeight: '1', padding: '8px 10px', display: 'none' });
+      zHint.addEventListener('click', () => clickChessableHint(zHint));
+      zenHintBtnRef = zHint;
+
       // Zen-only: 🔬 oeffnet die aktuelle Stellung in der RookHub-Analyse (neuer Tab) —
       // draussen uebernimmt das der beschriftete Analyse-Knopf, im Zen gilt: nur Icons.
       const zAnalyse = document.createElement('button');
@@ -4257,6 +4303,7 @@
       wrap.appendChild(searchBtn);
       wrap.appendChild(refreshBtn);
       wrap.appendChild(rememberBtn);
+      wrap.appendChild(zHint);
       wrap.appendChild(zAnalyse);
       wrap.appendChild(zPanel);
       wrap.appendChild(zNext);
