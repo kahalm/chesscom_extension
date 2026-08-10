@@ -454,7 +454,6 @@ const CI_BOX = document.getElementById('chessable-import');
 const CI_COURSE = document.getElementById('ci-course');
 const CI_CRAWL = document.getElementById('ci-crawl');
 const CI_IMPORTCAP = document.getElementById('ci-importcap');
-const CI_LIVE = document.getElementById('ci-live');
 const CI_PROGRESS = document.getElementById('ci-progress');
 const CI_STATUS = document.getElementById('ci-status');
 let ciTabId = null, ciPoll = null, ciTargetInit = false;
@@ -525,7 +524,6 @@ function ciRender(st) {
   } else {
     CI_IMPORTCAP.style.display = 'none';
   }
-  if (document.activeElement !== CI_LIVE) CI_LIVE.checked = !!st.autoImport;
   if (st.progress) {
     const p = st.progress;
     const b = document.createElement('b');
@@ -584,7 +582,6 @@ async function initChessableImport() {
     await ciSend('importCaptured', { target: ciSelectedTarget() });
     ciTick();
   });
-  CI_LIVE.addEventListener('change', () => ciSend('setLive', { enabled: CI_LIVE.checked }));
   document.querySelectorAll('input[name="ci-target"]').forEach((r) =>
     r.addEventListener('change', () => ciSend('setTarget', { target: ciSelectedTarget() })));
 

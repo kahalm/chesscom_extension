@@ -657,10 +657,11 @@
   // Per-bid-Mitschnitt-Puffer (Session, in-memory). getGame trägt nur die oid → oid→lid via getList.
   const cap = { bid: null, courseText: null, lists: {}, oidToLid: {}, games: {}, bytes: 0 };
   const CAP_MAX_BYTES = 40 * 1024 * 1024;   // Speicher-Deckel (großer Kurs)
-  let autoImport = false;                   // V1: Mitschnitt beim Training automatisch senden
+  // Live-Anhängen ist immer aktiv (kein Schalter mehr): beim Durchklicken erfasste Linien werden
+  // laufend an RookHub angehängt. Es gibt keinen Grund, das abzuschalten — der frühere Opt-in-
+  // Toggle (rookhubChessableAutoImport) ist entfernt.
+  const autoImport = true;
   let autoImportTimer = null;
-
-  try { chrome.storage.local.get('rookhubChessableAutoImport', (r) => { autoImport = !!(r && r.rookhubChessableAutoImport); }); } catch (e) {}
 
   function resetCap(bid) { cap.bid = bid; cap.courseText = null; cap.lists = {}; cap.oidToLid = {}; cap.games = {}; cap.bytes = 0; }
 
@@ -1199,12 +1200,6 @@
         if (msg.target === 'book' || msg.target === 'repertoire') importTarget = msg.target;
         importCaptured(importTarget);
         sendResponse({ started: true });
-        break;
-      case 'setLive':
-        autoImport = !!msg.enabled;
-        try { chrome.storage.local.set({ rookhubChessableAutoImport: autoImport }); } catch (e) {}
-        if (autoImport && hasUnsentLine()) scheduleAutoImport();
-        sendResponse(importState());
         break;
       case 'refreshProgress':
         ensureProgress(true);
