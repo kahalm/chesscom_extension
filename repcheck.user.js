@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RepCheck — Opening Repertoire Deviation Checker
 // @namespace    https://github.com/kahalm/repcheck
-// @version      1.51.0
+// @version      1.52.0
 // @require      https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js
 // @description  Shows where your game deviates from your opening repertoire (chess.com + lichess, PGN files or RookHub). On chessable.com: copy/search FEN, remember a line to RookHub, show earned XP, report active training time to RookHub, read the API token.
 // @author       kahalm
@@ -380,6 +380,8 @@
       // — ✓/○-Marker an Chessables eigener Linienliste —
       'progress.onRookhub': 'On RookHub',
       'progress.notOnRookhub': 'Not on RookHub yet',
+      'progress.cachedCount': '{done}/{total} lines cached on RookHub',
+      'progress.cachedCountShort': '{count} lines cached on RookHub',
 
       // — Fehlertexte —
       'err.noBackground': 'no response from the background worker',
@@ -582,6 +584,8 @@
       'tools.savedWithLink': 'Gespeichert · Teilen-Link kopiert',
       'progress.onRookhub': 'Auf RookHub',
       'progress.notOnRookhub': 'Noch nicht auf RookHub',
+      'progress.cachedCount': '{done}/{total} Linien auf RookHub gecacht',
+      'progress.cachedCountShort': '{count} Linien auf RookHub gecacht',
 
       'err.noBackground': 'keine Antwort vom Background-Worker',
       'err.tokenInvalid': 'Token ungültig oder abgelaufen.',
@@ -810,6 +814,8 @@
       'menu.chessableTokenCopied': 'RepCheck: Chessable token kopiran u međuspremnik.',
       'progress.onRookhub': 'Na RookHubu',
       'progress.notOnRookhub': 'Još nije na RookHubu',
+      'progress.cachedCount': '{done}/{total} linija spremljeno na RookHub',
+      'progress.cachedCountShort': '{count} linija spremljeno na RookHub',
     },
   };
 
@@ -2772,6 +2778,8 @@
       } catch (e) { return null; }
     }
     async function ensureProgress(force) {
+      // Nur auf Kurs-/Practice-Seiten die Struktur+Overlay ziehen (Startseite → annotateHomeCourses).
+      if (!/\/(course|practice)\/\d+/.test(location.pathname)) return;
       const bid = currentCourseId(); if (!bid) return;
       // Ohne RookHub-Config gibt es nichts anzuzeigen (fetchImportedOids liefert dann null) — dann
       // aber auch KEIN automatisches getCourse mit dem Chessable-Bearer abfeuern. Sonst erzeugt
@@ -2800,8 +2808,18 @@
       progressEl.innerHTML = `<div style="font-weight:600;color:#e8eaed">Auf RookHub: ${c.done}/${c.total} Linien (${pct}%)</div>` +
         `<div style="margin-top:2px;font-size:11px;color:#9aa4b2;max-height:80px;overflow:auto">${lines}</div>`;
     }
+    function upsertCountBadge(host, cls, done, total) {
+      if (!host) return;
+      let b = host.querySelector(':scope > .' + cls);
+      if (!b) { b = document.createElement('span'); b.className = cls; host.insertBefore(b, host.firstChild); }
+      b.textContent = done + '/' + total;
+      b.title = t('progress.cachedCount', { done, total });
+      const col = (total > 0 && done >= total) ? '#4caf50' : (done > 0 ? '#e0a020' : '#9aa4b2');
+      b.style.cssText = `margin-right:6px;font-weight:700;font-size:12px;color:${col}`;
+    }
     function annotateDom() {
       if (!progressStruct) return;
+      // (1) Linie: ✓/○ je Variante (oid im href/data-Attribut).
       for (const oid of progressStruct.allOids) {
         const done = importedOids.has(String(oid));
         const el = document.querySelector(`a[href*="/${oid}"], a[href$="/${oid}"], [data-oid="${oid}"], [data-variation-id="${oid}"], [data-id="${oid}"]`);
@@ -2816,12 +2834,65 @@
         b.style.cssText = `margin-right:6px;font-weight:700;color:${done ? '#4caf50' : '#9aa4b2'}`;
         row.insertBefore(b, row.firstChild);
       }
+      // (2) Kurs-Seite /course/{bid}: pro Kapitel done/total + Kurs-Gesamtsumme.
+      const bid = progressBid;
+      if (bid && new RegExp('/course/' + bid + '(?:/|$)').test(location.pathname)) {
+        const counts = progressCounts(progressStruct.chapters, importedOids);
+        const perByLid = new Map(counts.perChapter.map(c => [String(c.lid), c]));
+        const lidRe = new RegExp('/course/' + bid + '/(\\d+)(?:[/?#]|$)');
+        for (const a of document.querySelectorAll(`a[href*="/course/${bid}/"]`)) {
+          const m = lidRe.exec(a.getAttribute('href') || '');
+          if (!m) continue;
+          const c = perByLid.get(m[1]);
+          if (!c) continue;
+          upsertCountBadge(a.closest('li, tr, [role="row"], div') || a, 'rc-chap-badge', c.done, c.total);
+        }
+        upsertCountBadge(document.querySelector('h1'), 'rc-course-badge', counts.done, counts.total);
+      }
+    }
+    // Kursübersicht (Startseite): je Kurs-Karte die Zahl bereits gecachter Linien (numerator, 1 Call/Kurs).
+    const homeCache = new Map();
+    const HOME_MAX_COURSES = 40;
+    let homeRunning = false;
+    async function annotateHomeCourses() {
+      if (!/^\/(?:home|dashboard)?$/.test(location.pathname)) return;
+      const cfg = getCfg();
+      if (!cfg || !cfg.url || !cfg.token) return;
+      for (const bid of homeCache.keys()) annotateHomeBadge(bid);
+      if (homeRunning) return;
+      homeRunning = true;
+      try {
+        const bids = [];
+        for (const a of document.querySelectorAll('a[href*="/course/"]')) {
+          const m = /\/course\/(\d+)(?:[/?#]|$)/.exec(a.getAttribute('href') || '');
+          if (m && !homeCache.has(m[1]) && !bids.includes(m[1])) bids.push(m[1]);
+          if (bids.length >= HOME_MAX_COURSES) break;
+        }
+        for (const bid of bids) {
+          homeCache.set(bid, 'pending');
+          const prog = await fetchImportedOids(bid);
+          homeCache.set(bid, (prog && Array.isArray(prog.oids)) ? prog.oids.length : 0);
+          annotateHomeBadge(bid);
+        }
+      } catch (e) { /* still */ }
+      finally { homeRunning = false; }
+    }
+    function annotateHomeBadge(bid) {
+      const n = homeCache.get(bid);
+      if (typeof n !== 'number' || n <= 0) return;
+      for (const a of document.querySelectorAll(`a[href*="/course/${bid}"]`)) {
+        const card = a.closest('li, [role="listitem"], article, div') || a;
+        let b = card.querySelector(':scope > .rc-home-badge');
+        if (!b) { b = document.createElement('span'); b.className = 'rc-home-badge'; b.style.cssText = 'margin-right:6px;font-weight:700;font-size:12px;color:#4caf50'; card.insertBefore(b, card.firstChild); }
+        b.textContent = '🔖 ' + n;
+        b.title = t('progress.cachedCountShort', { count: n });
+      }
     }
     let domObserver = null;
     function startDomObserver() {
       if (domObserver || !document.body) return;
       let t = null;
-      domObserver = new MutationObserver(() => { if (t) return; t = setTimeout(() => { t = null; try { annotateDom(); } catch (e) {} }, 500); });
+      domObserver = new MutationObserver(() => { if (t) return; t = setTimeout(() => { t = null; try { annotateDom(); annotateHomeCourses(); } catch (e) {} }, 500); });
       domObserver.observe(document.body, { childList: true, subtree: true });
     }
 
@@ -3963,13 +4034,19 @@
     // Chessables eigener „Hint"-Knopf — im Zen ebenfalls hinterm Backdrop. Gleiche
   // Suche wie beim Next: per Text, klick programmatisch (React braucht keine Sichtbarkeit).
   function clickChessableHint(btn) {
-    const cand = [...document.querySelectorAll('button, a, [role="button"]')].find((el) => {
-      if (el.closest('#' + CONTAINER_ID)) return false;
-      const t = (el.textContent || '').trim();
-      if (!/^(hint|tipp)$/i.test(t)) return false;
-      const r = el.getBoundingClientRect();
-      return r.width > 0 && r.height > 0;
-    });
+    // Chessables Hint ist ein Icon-DIV [data-testid="squareHintButton"] (Glocke + „Hint") im
+    // .board-footer — KEIN <button>. Primär per testid (klickt auch im Zen hinterm Backdrop),
+    // Fallback Textsuche inkl. div[data-testid].
+    let cand = document.querySelector('[data-testid="squareHintButton"]');
+    if (!cand) {
+      cand = [...document.querySelectorAll('button, a, [role="button"], div[data-testid]')].find((el) => {
+        if (el.closest('#' + CONTAINER_ID)) return false;
+        const t = (el.textContent || '').trim();
+        if (!/^(hint|tipp)$/i.test(t)) return false;
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+      });
+    }
     if (cand) cand.click();
     else flash(btn, 'Kein „Hint" da', '#c62828');
   }

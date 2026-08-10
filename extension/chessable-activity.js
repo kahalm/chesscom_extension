@@ -1213,6 +1213,10 @@
 
   async function ensureProgress(force) {
     if (!Crawl) return;
+    // Nur auf Kurs-/Practice-Seiten die (getCourse-)Struktur+Overlay ziehen — auf der Startseite
+    // (currentCourseId() fällt sonst auf den ERSTEN Kurs-Link zurück) macht das die Kursübersicht
+    // (annotateHomeCourses), kein getCourse für einen willkürlichen Kurs.
+    if (!/\/(course|practice)\/\d+/.test(location.pathname)) return;
     const bid = currentCourseId();
     if (!bid) return;
     // Ohne RookHub-Config gibt es nichts anzuzeigen (fetchImportedOids liefert dann null) — dann
@@ -1241,8 +1245,24 @@
   // Best-Effort: an Chessables eigene Linien-Elemente ein ✓/○ heften. Wir suchen Elemente, deren
   // href/data-Attribut die oid als eigenes Segment enthält (robust ggü. Layout, fragil nur, falls
   // Chessable die oid gar nicht im DOM ausweist). Idempotent über ein data-Flag.
+  // Zähl-Badge „done/total" (Kapitel/Kurs) idempotent an ein Element heften.
+  function upsertCountBadge(host, cls, done, total) {
+    if (!host) return;
+    let b = host.querySelector(':scope > .' + cls);
+    if (!b) {
+      b = document.createElement('span');
+      b.className = cls;
+      host.insertBefore(b, host.firstChild);
+    }
+    b.textContent = done + '/' + total;
+    b.title = t('progress.cachedCount', { done, total });
+    const col = (total > 0 && done >= total) ? '#4caf50' : (done > 0 ? '#e0a020' : '#9aa4b2');
+    b.style.cssText = `margin-right:6px;font-weight:700;font-size:12px;color:${col}`;
+  }
+
   function annotateDom() {
     if (!progressStruct) return;
+    // (1) Linie: ✓/○ je Variante (oid im href/data-Attribut).
     for (const oid of progressStruct.allOids) {
       const done = importedOids.has(String(oid));
       let el = document.querySelector(`a[href*="/${oid}"], a[href$="/${oid}"], [data-oid="${oid}"], [data-variation-id="${oid}"], [data-id="${oid}"]`);
@@ -1261,6 +1281,69 @@
       badge.style.cssText = `margin-right:6px;font-weight:700;color:${done ? '#4caf50' : '#9aa4b2'}`;
       row.insertBefore(badge, row.firstChild);
     }
+    // (2) Kurs-Seite /course/{bid}: pro Kapitel done/total + Kurs-Gesamtsumme.
+    const bid = progressBid;
+    if (bid && new RegExp('/course/' + bid + '(?:/|$)').test(location.pathname)) {
+      const counts = Crawl.progressCounts(progressStruct.chapters, importedOids);
+      const perByLid = new Map(counts.perChapter.map(c => [String(c.lid), c]));
+      // Kapitel-Links tragen die lid (/course/{bid}/{lid}); lid exakt aus dem Pfadsegment parsen.
+      const lidRe = new RegExp('/course/' + bid + '/(\\d+)(?:[/?#]|$)');
+      for (const a of document.querySelectorAll(`a[href*="/course/${bid}/"]`)) {
+        const m = lidRe.exec(a.getAttribute('href') || '');
+        if (!m) continue;
+        const c = perByLid.get(m[1]);
+        if (!c) continue;
+        upsertCountBadge(a.closest('li, tr, [role="row"], div') || a, 'rc-chap-badge', c.done, c.total);
+      }
+      // Kurs-Gesamtsumme an die Kurs-Überschrift (best-effort: erstes h1).
+      upsertCountBadge(document.querySelector('h1'), 'rc-course-badge', counts.done, counts.total);
+    }
+  }
+
+  // Kursübersicht (Startseite): je Kurs-Karte die Zahl bereits gecachter Linien. Braucht je Kurs einen
+  // RookHub-Progress-Call (numerator only) → sequenziell, session-gecacht, gedeckelt; nur authed.
+  const homeCache = new Map();   // bid → Anzahl gecachter Linien | 'pending'
+  const HOME_MAX_COURSES = 40;
+  let homeRunning = false;
+  async function annotateHomeCourses() {
+    if (!/^\/(?:home|dashboard)?$/.test(location.pathname)) return;   // nur Startseite/Übersicht
+    const cfg = await readConfig();
+    if (!cfg || !cfg.url || !cfg.token) return;   // Zähler gibt es nur mit RookHub-Token
+    // schon bekannte Karten sofort markieren
+    for (const bid of homeCache.keys()) annotateHomeBadge(bid);
+    if (homeRunning) return;
+    homeRunning = true;
+    try {
+      const bids = [];
+      for (const a of document.querySelectorAll('a[href*="/course/"]')) {
+        const m = /\/course\/(\d+)(?:[/?#]|$)/.exec(a.getAttribute('href') || '');
+        if (m && !homeCache.has(m[1]) && !bids.includes(m[1])) bids.push(m[1]);
+        if (bids.length >= HOME_MAX_COURSES) break;
+      }
+      for (const bid of bids) {
+        homeCache.set(bid, 'pending');
+        const prog = await fetchImportedOids(bid);
+        homeCache.set(bid, (prog && Array.isArray(prog.oids)) ? prog.oids.length : 0);
+        annotateHomeBadge(bid);
+      }
+    } catch (e) { /* still */ }
+    finally { homeRunning = false; }
+  }
+  function annotateHomeBadge(bid) {
+    const n = homeCache.get(bid);
+    if (typeof n !== 'number' || n <= 0) return;   // nichts anzeigen, wenn 0 gecacht
+    for (const a of document.querySelectorAll(`a[href*="/course/${bid}"]`)) {
+      const card = a.closest('li, [role="listitem"], article, div') || a;
+      let b = card.querySelector(':scope > .rc-home-badge');
+      if (!b) {
+        b = document.createElement('span');
+        b.className = 'rc-home-badge';
+        b.style.cssText = 'margin-right:6px;font-weight:700;font-size:12px;color:#4caf50';
+        card.insertBefore(b, card.firstChild);
+      }
+      b.textContent = '🔖 ' + n;
+      b.title = t('progress.cachedCountShort', { count: n });
+    }
   }
 
   // Chessable ist eine SPA → bei DOM-Änderungen die Marker (nicht die Fetches) neu anwenden.
@@ -1270,7 +1353,7 @@
     let t = null;
     domObserver = new MutationObserver(() => {
       if (t) return;
-      t = setTimeout(() => { t = null; try { annotateDom(); } catch (e) {} }, 500);
+      t = setTimeout(() => { t = null; try { annotateDom(); annotateHomeCourses(); } catch (e) {} }, 500);
     });
     domObserver.observe(document.body, { childList: true, subtree: true });
   }

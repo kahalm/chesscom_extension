@@ -933,13 +933,19 @@
   // Chessables eigener „Hint"-Knopf — im Zen ebenfalls hinterm Backdrop. Gleiche
   // Suche wie beim Next: per Text, klick programmatisch (React braucht keine Sichtbarkeit).
   function clickChessableHint(btn) {
-    const cand = [...document.querySelectorAll('button, a, [role="button"]')].find((el) => {
-      if (el.closest('#' + CONTAINER_ID)) return false;
-      const t = (el.textContent || '').trim();
-      if (!/^(hint|tipp)$/i.test(t)) return false;
-      const r = el.getBoundingClientRect();
-      return r.width > 0 && r.height > 0;
-    });
+    // Chessables Hint ist ein Icon-DIV [data-testid="squareHintButton"] (Glocke + „Hint") im
+    // .board-footer — KEIN <button>. Darum primär per testid (klickt auch im Zen hinterm Backdrop;
+    // React braucht keine Sichtbarkeit). Fallback: die alte Textsuche, jetzt inkl. div[data-testid].
+    let cand = document.querySelector('[data-testid="squareHintButton"]');
+    if (!cand) {
+      cand = [...document.querySelectorAll('button, a, [role="button"], div[data-testid]')].find((el) => {
+        if (el.closest('#' + CONTAINER_ID)) return false;
+        const t = (el.textContent || '').trim();
+        if (!/^(hint|tipp)$/i.test(t)) return false;
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+      });
+    }
     if (cand) cand.click();
     else flash(btn, 'Kein „Hint" da', '#c62828');
   }

@@ -280,6 +280,17 @@ ab. RookHub claimt die anonym gesammelten Linien, sobald der User seinen Chessab
 - **Privacy/Store**: der Default sendet an den Autor-Server — offengelegt in `PRIVACY.md`/`docs/privacy.md`,
   und NUR nach ausdrücklicher Zustimmung. Beim Ändern nicht die Zustimmungspflicht/Offenlegung entfernen.
 
+**Cached-Count-Overlays (v1.52.0):** `annotateDom` heftet neben den ✓/○-Linien-Markern jetzt auch
+Zähl-Badges: auf `/course/{bid}` pro Kapitel `done/total` (Anker `a[href*="/course/{bid}/{lid}"]`, lid exakt
+aus dem Pfadsegment) + eine Kurs-Gesamtsumme am ersten `h1`; auf der Startseite je Kurs-Karte „🔖 N"
+gecachte Linien (`annotateHomeCourses`, 1 Progress-Call je Kurs, session-gecacht, gedeckelt HOME_MAX_COURSES=40).
+Nur mit RookHub-Token (Zähler kommen aus `GET /chessable/progress?bid=`). i18n `progress.cachedCount*`.
+`ensureProgress` läuft nur noch auf `/course|practice/\d+` (Startseite → `annotateHomeCourses`).
+
+**Chessable-Hint-Button (v1.52.0):** `clickChessableHint` klickt primär `[data-testid="squareHintButton"]`
+(Chessables Hint ist ein Icon-DIV mit Glocke, KEIN `<button>` → die alte Text-über-`button`-Suche fand ihn
+nie). Fallback bleibt die Textsuche, jetzt inkl. `div[data-testid]`. Extension `chessable-fen.js` + Userscript.
+
 ## Extension-Architektur (`extension/`)
 
 ```
