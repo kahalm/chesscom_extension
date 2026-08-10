@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RepCheck — Opening Repertoire Deviation Checker
 // @namespace    https://github.com/kahalm/repcheck
-// @version      1.50.0
+// @version      1.51.0
 // @require      https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js
 // @description  Shows where your game deviates from your opening repertoire (chess.com + lichess, PGN files or RookHub). On chessable.com: copy/search FEN, remember a line to RookHub, show earned XP, report active training time to RookHub, read the API token.
 // @author       kahalm
@@ -389,6 +389,9 @@
       'err.urlTokenMissing': 'RookHub: URL or token missing.',
       'err.noToken': 'no token in the response',
       'err.notConnected': 'Not connected to RookHub',
+      'review.consent.body': 'RepCheck sends the lines you train to {host} to build your courses. Send them?',
+      'review.consent.allow': 'Send',
+      'review.consent.deny': 'Don’t send',
       'err.noChessableToken': 'No Chessable token (are you logged in to chessable.com?)',
       'err.chessableTokenNoUid': 'Chessable token without uid',
       'err.chessableHttp': 'Chessable HTTP {status}',
@@ -587,6 +590,9 @@
       'err.urlTokenMissing': 'RookHub: URL oder Token fehlt.',
       'err.noToken': 'kein Token in der Antwort',
       'err.notConnected': 'Nicht mit RookHub verbunden',
+      'review.consent.body': 'RepCheck schickt die von dir trainierten Linien an {host}, um deine Kurse aufzubauen. Senden?',
+      'review.consent.allow': 'Senden',
+      'review.consent.deny': 'Nicht senden',
       'err.noChessableToken': 'Kein Chessable-Token (auf chessable.com eingeloggt?)',
       'err.chessableTokenNoUid': 'Chessable-Token ohne uid',
       'err.chessableHttp': 'Chessable HTTP {status}',
@@ -787,6 +793,9 @@
       'err.urlTokenMissing': 'RookHub: nedostaje URL ili token.',
       'err.noToken': 'u odgovoru nema tokena',
       'err.notConnected': 'Nije povezano s RookHubom',
+      'review.consent.body': 'RepCheck šalje linije koje treniraš na {host} kako bi izgradio tvoje tečajeve. Poslati?',
+      'review.consent.allow': 'Pošalji',
+      'review.consent.deny': 'Ne šalji',
       'err.noChessableToken': 'Nema Chessable tokena (jesi li prijavljen na chessable.com?)',
       'err.chessableTokenNoUid': 'Chessable token bez uid',
       'err.chessableHttp': 'Chessable HTTP {status}',
@@ -2433,14 +2442,37 @@
     // parallel zu getGame an RookHub (POST /api/extension/chessable/review-lines) → dort Lücken-Füller
     // (getGame gewinnt, sonst füllt getReview → Kurs vervollständigt sich beim Durchtrainieren).
     // Session-Dedupe + Batch; best-effort (kein Re-Queue).
+    const DEFAULT_ROOKHUB_URL = 'https://rookhub.oberschmid.homes';
     const reviewPending = new Map(); const reviewSent = new Set();
     let reviewFlushTimer = null;
     const REVIEW_JSON_MAX = 512 * 1024;
+    const REVIEW_PENDING_MAX = 500;   // Puffer-Deckel: bei ausstehender Zustimmung nicht unbegrenzt anhäufen
+    // Zustimmung zum token-losen Versand: 'granted' | 'denied' | null (ungefragt).
+    function getReviewConsent() { try { return (typeof GM_getValue !== 'undefined' ? GM_getValue('rcReviewConsent', null) : null) || null; } catch (e) { return null; } }
+    function setReviewConsent(v) { try { if (typeof GM_setValue !== 'undefined') GM_setValue('rcReviewConsent', v); } catch (e) {} }
+    let consentPromptShown = false;
+    function showReviewConsentPrompt(targetUrl) {
+      if (consentPromptShown || typeof document === 'undefined' || !document.body) return;
+      consentPromptShown = true;
+      let host; try { host = new URL(targetUrl).host; } catch (e) { host = String(targetUrl); }
+      const bar = document.createElement('div');
+      bar.id = 'repcheck-review-consent';
+      Object.assign(bar.style, { position: 'fixed', left: '16px', bottom: '16px', zIndex: '2147483647', maxWidth: '360px', background: '#1e1e24', color: '#fff', padding: '14px 16px', borderRadius: '10px', boxShadow: '0 4px 24px rgba(0,0,0,.4)', font: '13px/1.45 system-ui, sans-serif' });
+      const msg = document.createElement('div'); msg.textContent = t('review.consent.body', { host }); msg.style.marginBottom = '10px';
+      const row = document.createElement('div'); Object.assign(row.style, { display: 'flex', gap: '8px', justifyContent: 'flex-end' });
+      const mkBtn = (label, bg, fg, bordered) => { const b = document.createElement('button'); b.type = 'button'; b.textContent = label; Object.assign(b.style, { background: bg, color: fg, border: bordered ? '1px solid #555' : 'none', borderRadius: '6px', padding: '6px 12px', cursor: 'pointer', font: 'inherit' }); return b; };
+      const no = mkBtn(t('review.consent.deny'), 'transparent', '#bbb', true);
+      const yes = mkBtn(t('review.consent.allow'), '#3d7bfd', '#fff', false);
+      no.addEventListener('click', () => { setReviewConsent('denied'); reviewPending.clear(); bar.remove(); });
+      yes.addEventListener('click', () => { setReviewConsent('granted'); bar.remove(); flushReviewLines(); });
+      row.appendChild(no); row.appendChild(yes); bar.appendChild(msg); bar.appendChild(row); document.body.appendChild(bar);
+    }
     function queueReviewLine(bid, oid, json) {
       if (!bid || !oid || typeof json !== 'string') return;
       if (!json.trim() || json.trim() === '{}' || json.length > REVIEW_JSON_MAX) return;
       const key = bid + '|' + oid;
       if (reviewSent.has(key)) return;
+      if (!reviewPending.has(key) && reviewPending.size >= REVIEW_PENDING_MAX) return;   // Deckel (Consent ausstehend)
       reviewPending.set(key, { bid: String(bid), oid: String(oid), json });
       if (!reviewFlushTimer) reviewFlushTimer = setTimeout(flushReviewLines, 15000);
     }
@@ -2448,7 +2480,21 @@
       reviewFlushTimer = null;
       if (!reviewPending.size) return;
       const cfg = getCfg();
-      if (!cfg || !cfg.url || !cfg.token) { reviewPending.clear(); return; }
+      const token = cfg && cfg.token;
+      const configuredUrl = cfg && cfg.url;
+      const authed = !!(token && configuredUrl);
+      let uid = null;
+      if (!authed) {
+        // Token-los: uid Pflicht (Identität) + einmalige Zustimmung.
+        uid = rcDecodeChessableUid(getToken());
+        if (!uid) { reviewPending.clear(); return; }
+        const consent = getReviewConsent();
+        const targetUrl = configuredUrl || DEFAULT_ROOKHUB_URL;
+        if (consent === 'denied') { reviewPending.clear(); return; }
+        if (consent !== 'granted') { showReviewConsentPrompt(targetUrl); return; }   // puffern, auf Zustimmung warten
+      }
+      const baseUrl = String(authed ? configuredUrl : (configuredUrl || DEFAULT_ROOKHUB_URL)).replace(/\/$/, '');
+      const endpoint = authed ? '/api/extension/chessable/review-lines' : '/api/extension/chessable/review-lines/anon';
       const byBid = new Map();
       for (const [key, v] of reviewPending) {
         if (!byBid.has(v.bid)) byBid.set(v.bid, []);
@@ -2456,10 +2502,12 @@
         if (bucket.length < 50) { bucket.push([key, v]); reviewPending.delete(key); }
       }
       for (const [bid, items] of byBid) {
-        fetch(String(cfg.url).replace(/\/$/, '') + '/api/extension/chessable/review-lines', {
-          method: 'POST', mode: 'cors',
-          headers: { 'Authorization': 'Bearer ' + cfg.token, 'Accept': 'application/json', 'Content-Type': 'application/json' },
-          body: JSON.stringify({ bid, entries: items.map(([, v]) => ({ oid: v.oid, json: v.json })) }),
+        const entries = items.map(([, v]) => ({ oid: v.oid, json: v.json }));
+        const headers = { 'Accept': 'application/json', 'Content-Type': 'application/json' };
+        if (authed) headers['Authorization'] = 'Bearer ' + token;
+        fetch(baseUrl + endpoint, {
+          method: 'POST', mode: 'cors', headers,
+          body: JSON.stringify(authed ? { bid, entries } : { uid, bid, entries }),
         }).then(r => { if (r.ok) for (const [key] of items) reviewSent.add(key); }).catch(() => {});
       }
       if (reviewPending.size && !reviewFlushTimer) reviewFlushTimer = setTimeout(flushReviewLines, 15000);

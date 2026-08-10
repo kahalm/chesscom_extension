@@ -38,21 +38,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // configured RookHub instance. The content script mirrors {url,token} into
   // chrome.storage.local (key `rookhubConfig`); only allow the request if its
   // origin matches that stored URL's origin.
+  // Default-Ziel für token-lose getReview-Linien (kein hinterlegter RookHub-Token): auch ohne
+  // konfigurierte URL an dieses eine, fest bekannte Origin erlaubt (nicht offener Proxy).
+  const DEFAULT_ROOKHUB_ORIGIN = 'https://rookhub.oberschmid.homes';
   chrome.storage.local.get('rookhubConfig', (res) => {
     const cfgUrl = res && res.rookhubConfig && res.rookhubConfig.url;
-    if (!cfgUrl) {
-      sendResponse({ ok: false, error: 'rookhub not configured' });
-      return;
-    }
-    let allowedOrigin, targetOrigin;
+    const allowedOrigins = [DEFAULT_ROOKHUB_ORIGIN];
+    if (cfgUrl) { try { allowedOrigins.push(new URL(cfgUrl).origin); } catch (e) { /* ignore */ } }
+    let targetOrigin;
     try {
-      allowedOrigin = new URL(cfgUrl).origin;
       targetOrigin = new URL(url).origin;
     } catch (e) {
       sendResponse({ ok: false, error: 'invalid url' });
       return;
     }
-    if (targetOrigin !== allowedOrigin) {
+    if (!allowedOrigins.includes(targetOrigin)) {
       sendResponse({ ok: false, error: 'target origin not allowed' });
       return;
     }

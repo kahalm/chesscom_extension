@@ -257,6 +257,29 @@ eigene Kategorie **„Chessable"** des Trainingsziele-Trackers fließt.
 - **Privacy**: misst nur lokal aus Seiten-DOM; sendet ausschließlich an die vom User
   konfigurierte RookHub-Instanz (Dauer in Sekunden + Zuganzahl, kein Seiteninhalt).
 
+## Chessable getReview-Linien → RookHub (v1.50.0+; token-los + Default v1.51.0)
+
+Beim Training schneidet die Extension die rohe **getReview**-Antwort der gerade trainierten Linie
+mit (MAIN-World `chessable-capture.js` → isolierte `chessable-activity.js`; Userscript: fetch/XHR im
+Page-Kontext) und schickt sie an RookHub (`POST /api/extension/chessable/review-lines`), wo sie als
+Lücken-Füller neben getGame landet (siehe RookHub-CLAUDE.md). Klassifikation in `lib/chessable-crawl.js`
+(`classifyChessableApi` → `{kind:'review',bid,oid}`), Puffer/Flush in `chessable-activity.js`
+(`queueReviewLine`/`flushReviewLines`, Session-Dedupe, Batch, best-effort).
+
+**Token-los + Default-Ziel (v1.51.0):** Hat der User KEINEN RookHub-Token hinterlegt, gehen die
+Linien an den **anonymen** Endpoint `…/review-lines/anon` — identifiziert über die **Chessable-uid**
+(`rcDecodeChessableUid` aus dem Chessable-JWT), NICHT über ein Konto. Ziel ist die konfigurierte URL,
+sonst der eingebaute Default `https://rookhub.oberschmid.homes` (auch in `background.js` als erlaubtes
+Egress-Origin). Der **erste** token-lose Versand ist EINMALIG zustimmungspflichtig: `showReviewConsentPrompt`
+blendet ein In-Page-Banner ein (i18n `review.consent.*`), speichert `rcReviewConsent` = `granted`/`denied`
+(chrome.storage.local bzw. GM). Bis zur Zustimmung wird nur gepuffert; „Nicht senden" schaltet es dauerhaft
+ab. RookHub claimt die anonym gesammelten Linien, sobald der User seinen Chessable-Bearer verknüpft (uid-Match).
+- **Sync-Hinweis**: getrennte Codepfade Userscript (`initChessableBrowserImport`) ↔ Extension
+  (`chessable-activity.js`) — bei Änderungen beide angleichen. `classifyChessableApi` ist in beiden
+  hand-gespiegelt (KEINE generierte Region).
+- **Privacy/Store**: der Default sendet an den Autor-Server — offengelegt in `PRIVACY.md`/`docs/privacy.md`,
+  und NUR nach ausdrücklicher Zustimmung. Beim Ändern nicht die Zustimmungspflicht/Offenlegung entfernen.
+
 ## Extension-Architektur (`extension/`)
 
 ```

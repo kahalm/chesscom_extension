@@ -754,10 +754,61 @@
   // baut RookHub den Kurs auf, gewinnt ein vorhandener getGame-Eintrag, sonst füllt getReview die
   // Lücke → der Kurs vervollständigt sich nach und nach beim Durchtrainieren. Session-Dedupe +
   // Batch halten den Traffic klein; best-effort (kein Re-Queue bei Fehler — der nächste Review kommt).
+  //
+  // TOKEN-LOS (kein RookHub-Token hinterlegt): die Linien gehen an den ANONYMEN Endpoint
+  // (/review-lines/anon), identifiziert über die Chessable-uid (aus dem Chessable-JWT decodiert).
+  // Ziel ist die konfigurierte RookHub-URL, sonst der Default (rookhub.oberschmid.homes). Der ERSTE
+  // token-lose Versand ist EINMALIG zustimmungspflichtig (Consent-Banner); bis dahin wird nur gepuffert.
+  const DEFAULT_ROOKHUB_URL = 'https://rookhub.oberschmid.homes';
   const reviewPending = new Map();   // `${bid}|${oid}` → { bid, oid, json }
   const reviewSent = new Set();      // gleicher Key → in DIESER Session bereits erfolgreich gesendet
   let reviewFlushTimer = null;
   const REVIEW_JSON_MAX = 512 * 1024;   // je Linie (server-seitiger Cap ist 256 KB; hier großzügiger vorfiltern)
+  const REVIEW_PENDING_MAX = 500;       // Puffer-Deckel: bei ausstehender Zustimmung nicht unbegrenzt anhäufen
+
+  // Zustimmung zum token-losen Versand: 'granted' | 'denied' | null (ungefragt). Extension-privat.
+  function getReviewConsent() {
+    return new Promise((resolve) => {
+      try { chrome.storage.local.get('rcReviewConsent', (r) => resolve((r && r.rcReviewConsent) || null)); }
+      catch (e) { resolve(null); }
+    });
+  }
+  function setReviewConsent(v) { try { chrome.storage.local.set({ rcReviewConsent: v }); } catch (e) {} }
+
+  let consentPromptShown = false;   // je Session nur einmal einblenden
+  function styleConsentBtn(btn, bg, fg, bordered) {
+    Object.assign(btn.style, {
+      background: bg, color: fg, border: bordered ? '1px solid #555' : 'none',
+      borderRadius: '6px', padding: '6px 12px', cursor: 'pointer', font: 'inherit',
+    });
+  }
+  function showReviewConsentPrompt(targetUrl) {
+    if (consentPromptShown) return;
+    if (typeof document === 'undefined' || !document.body) return;
+    consentPromptShown = true;
+    let host; try { host = new URL(targetUrl).host; } catch (e) { host = String(targetUrl); }
+    const bar = document.createElement('div');
+    bar.id = 'repcheck-review-consent';
+    Object.assign(bar.style, {
+      position: 'fixed', left: '16px', bottom: '16px', zIndex: '2147483647', maxWidth: '360px',
+      background: '#1e1e24', color: '#fff', padding: '14px 16px', borderRadius: '10px',
+      boxShadow: '0 4px 24px rgba(0,0,0,.4)', font: '13px/1.45 system-ui, sans-serif',
+    });
+    const msg = document.createElement('div');
+    msg.textContent = t('review.consent.body', { host });
+    msg.style.marginBottom = '10px';
+    const row = document.createElement('div');
+    Object.assign(row.style, { display: 'flex', gap: '8px', justifyContent: 'flex-end' });
+    const no = document.createElement('button');
+    no.type = 'button'; no.textContent = t('review.consent.deny'); styleConsentBtn(no, 'transparent', '#bbb', true);
+    const yes = document.createElement('button');
+    yes.type = 'button'; yes.textContent = t('review.consent.allow'); styleConsentBtn(yes, '#3d7bfd', '#fff', false);
+    no.addEventListener('click', () => { setReviewConsent('denied'); reviewPending.clear(); bar.remove(); });
+    yes.addEventListener('click', () => { setReviewConsent('granted'); bar.remove(); flushReviewLines(); });
+    row.appendChild(no); row.appendChild(yes);
+    bar.appendChild(msg); bar.appendChild(row);
+    document.body.appendChild(bar);
+  }
 
   function queueReviewLine(bid, oid, json) {
     if (!bid || !oid || typeof json !== 'string') return;
@@ -765,6 +816,7 @@
     if (json.length > REVIEW_JSON_MAX) return;
     const key = bid + '|' + oid;
     if (reviewSent.has(key)) return;   // schon gesendet → nichts tun
+    if (!reviewPending.has(key) && reviewPending.size >= REVIEW_PENDING_MAX) return;   // Deckel (Consent ausstehend)
     reviewPending.set(key, { bid: String(bid), oid: String(oid), json });
     if (!reviewFlushTimer) reviewFlushTimer = setTimeout(flushReviewLines, 15000);
   }
@@ -773,8 +825,24 @@
     reviewFlushTimer = null;
     if (!reviewPending.size) return;
     const cfg = await readConfig();
-    if (!cfg || !cfg.url || !cfg.token) { reviewPending.clear(); return; }
-    const baseUrl = String(cfg.url).replace(/\/$/, '');
+    const token = cfg && cfg.token;
+    const configuredUrl = cfg && cfg.url;
+    const authed = !!(token && configuredUrl);
+
+    let uid = null;
+    if (!authed) {
+      // Token-los: uid Pflicht (Identität) + einmalige Zustimmung, sonst puffern/verwerfen.
+      uid = decodeUid(await readChessableToken());
+      if (!uid) { reviewPending.clear(); return; }   // ohne uid nicht identifizierbar
+      const consent = await getReviewConsent();
+      const targetUrl = configuredUrl || DEFAULT_ROOKHUB_URL;
+      if (consent === 'denied') { reviewPending.clear(); return; }
+      if (consent !== 'granted') { showReviewConsentPrompt(targetUrl); return; }   // puffern, auf Zustimmung warten
+    }
+
+    const baseUrl = String(authed ? configuredUrl : (configuredUrl || DEFAULT_ROOKHUB_URL)).replace(/\/$/, '');
+    const endpoint = authed ? '/api/extension/chessable/review-lines' : '/api/extension/chessable/review-lines/anon';
+
     // je bid ein Batch (max 50 Linien — Rest im nächsten Flush; getReview-JSON ist groß)
     const byBid = new Map();
     for (const [key, v] of reviewPending) {
@@ -783,17 +851,16 @@
       if (bucket.length < 50) { bucket.push([key, v]); reviewPending.delete(key); }
     }
     for (const [bid, items] of byBid) {
-      const body = JSON.stringify({ bid, entries: items.map(([, v]) => ({ oid: v.oid, json: v.json })) });
+      const entries = items.map(([, v]) => ({ oid: v.oid, json: v.json }));
+      const body = JSON.stringify(authed ? { bid, entries } : { uid, bid, entries });
+      const headers = { 'Content-Type': 'application/json', 'Accept': 'application/json' };
+      if (authed) headers['Authorization'] = 'Bearer ' + token;
       try {
         chrome.runtime.sendMessage({
           type: 'rookhub-fetch',
-          url: baseUrl + '/api/extension/chessable/review-lines',
+          url: baseUrl + endpoint,
           method: 'POST',
-          headers: {
-            'Authorization': 'Bearer ' + cfg.token,
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-          },
+          headers,
           body,
           expect: 'json',
         }, (resp) => {
