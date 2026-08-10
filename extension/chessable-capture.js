@@ -3,10 +3,10 @@
 // Warum MAIN-World: die Chessable-SPA ruft ihre eigene API mit window.fetch/XMLHttpRequest im
 // Seiten-Kontext auf. In der isolierten Content-Script-Welt ist das ein ANDERES fetch/XHR — die
 // SPA-Antworten sind dort nicht abfangbar. Daher patchen wir hier (MAIN) window.fetch + XHR und
-// reichen die ROHEN getCourse/getList/getGame-Antworten per postMessage an die isolierte
+// reichen die ROHEN getCourse/getList/getGame/getReview-Antworten per postMessage an die isolierte
 // chessable-activity.js weiter (die puffert sie und sendet sie — mit Token/Config/Egress — an RookHub).
 //
-// Sicherheit/Privacy: NUR die drei Kurs-Daten-Endpoints werden weitergereicht (kein getHomeData,
+// Sicherheit/Privacy: NUR die vier Kurs-Daten-Endpoints werden weitergereicht (kein getHomeData,
 // keine Auth-Antworten). Kein Egress + KEIN Token hier — der Token bleibt in der isolierten Welt.
 // Bridge same-origin (postMessage an location.origin); Empfänger prüft source+origin.
 (function () {
@@ -16,7 +16,7 @@
 
   // Nur die Kurs-Struktur-Endpoints (nicht getHomeData/authenticate/…). Klassifikation macht die
   // isolierte Seite über die geteilte lib — hier nur ein billiger Vorfilter.
-  const RELEVANT = /\/api\/v1\/(getCourse|getList|getGame)(\?|$)/;
+  const RELEVANT = /\/api\/v1\/(getCourse|getList|getGame|getReview)(\?|$)/;
 
   function forward(url, body) {
     if (typeof body !== 'string' || !body) return;

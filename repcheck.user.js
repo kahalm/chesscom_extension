@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RepCheck — Opening Repertoire Deviation Checker
 // @namespace    https://github.com/kahalm/repcheck
-// @version      1.49.0
+// @version      1.50.0
 // @require      https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js
 // @description  Shows where your game deviates from your opening repertoire (chess.com + lichess, PGN files or RookHub). On chessable.com: copy/search FEN, remember a line to RookHub, show earned XP, report active training time to RookHub, read the API token.
 // @author       kahalm
@@ -2333,6 +2333,7 @@
       if (p.endsWith('/api/v1/getCourse')) return { kind: 'course', bid: u.searchParams.get('bid') };
       if (p.endsWith('/api/v1/getList')) return { kind: 'list', bid: u.searchParams.get('bid'), lid: u.searchParams.get('lid') };
       if (p.endsWith('/api/v1/getGame')) return { kind: 'game', oid: u.searchParams.get('oid') };
+      if (p.endsWith('/api/v1/getReview')) return { kind: 'review', bid: u.searchParams.get('bid'), oid: u.searchParams.get('oid') };
       return null;
     }
     function parseChapterLids(t) { let o; try { o = typeof t === 'string' ? JSON.parse(t) : t; } catch (e) { return []; } const a = o && (o.course || o.Course) && ((o.course || o.Course).data || (o.course || o.Course).Data); return Array.isArray(a) ? a.map(c => c && (c.id != null ? c.id : c.Id)).filter(v => v != null).map(String) : []; }
@@ -2427,7 +2428,43 @@
       if (typeof g.lastReviewed === 'string') entry.lastReviewed = g.lastReviewed.slice(0, 40);
       queueProblemEntry(bid, entry);
     }
-    window.addEventListener('pagehide', flushProblemMoves);
+    // ===== getReview-Linien ernten (Spiegel von extension/chessable-activity.js) =====
+    // getReview = Trainings-Endpoint (volle Zugfolge + Alternativen + Kommentare + Pfeile). Rohes JSON
+    // parallel zu getGame an RookHub (POST /api/extension/chessable/review-lines) → dort Lücken-Füller
+    // (getGame gewinnt, sonst füllt getReview → Kurs vervollständigt sich beim Durchtrainieren).
+    // Session-Dedupe + Batch; best-effort (kein Re-Queue).
+    const reviewPending = new Map(); const reviewSent = new Set();
+    let reviewFlushTimer = null;
+    const REVIEW_JSON_MAX = 512 * 1024;
+    function queueReviewLine(bid, oid, json) {
+      if (!bid || !oid || typeof json !== 'string') return;
+      if (!json.trim() || json.trim() === '{}' || json.length > REVIEW_JSON_MAX) return;
+      const key = bid + '|' + oid;
+      if (reviewSent.has(key)) return;
+      reviewPending.set(key, { bid: String(bid), oid: String(oid), json });
+      if (!reviewFlushTimer) reviewFlushTimer = setTimeout(flushReviewLines, 15000);
+    }
+    function flushReviewLines() {
+      reviewFlushTimer = null;
+      if (!reviewPending.size) return;
+      const cfg = getCfg();
+      if (!cfg || !cfg.url || !cfg.token) { reviewPending.clear(); return; }
+      const byBid = new Map();
+      for (const [key, v] of reviewPending) {
+        if (!byBid.has(v.bid)) byBid.set(v.bid, []);
+        const bucket = byBid.get(v.bid);
+        if (bucket.length < 50) { bucket.push([key, v]); reviewPending.delete(key); }
+      }
+      for (const [bid, items] of byBid) {
+        fetch(String(cfg.url).replace(/\/$/, '') + '/api/extension/chessable/review-lines', {
+          method: 'POST', mode: 'cors',
+          headers: { 'Authorization': 'Bearer ' + cfg.token, 'Accept': 'application/json', 'Content-Type': 'application/json' },
+          body: JSON.stringify({ bid, entries: items.map(([, v]) => ({ oid: v.oid, json: v.json })) }),
+        }).then(r => { if (r.ok) for (const [key] of items) reviewSent.add(key); }).catch(() => {});
+      }
+      if (reviewPending.size && !reviewFlushTimer) reviewFlushTimer = setTimeout(flushReviewLines, 15000);
+    }
+    window.addEventListener('pagehide', () => { flushProblemMoves(); flushReviewLines(); });
     function getToken() { try { return extractJwt(localStorage.getItem(lsKey)); } catch (e) { return null; } }
     function currentCourseId() {
       const m = /\/courses?\/(\d+)(?:\/|$)/.exec(location.pathname);
@@ -2446,7 +2483,15 @@
     function absorb(url, body) {
       if (typeof body !== 'string' || !body || body.trim() === '' || body.trim() === '{}') return;
       const info = classifyApi(url);
-      if (!info || cap.bytes + body.length > CAP_MAX) return;
+      if (!info) return;
+      // getReview läuft NEBEN dem Kurs-Mitschnitt-Puffer (eigene Egress-Bahn) — nicht gegen CAP_MAX
+      // zählen/puffern; nur an RookHub weiterreichen.
+      if (info.kind === 'review') {
+        queueReviewLine(info.bid || cap.bid || currentCourseId(), info.oid, body);
+        if (!crawling && info.oid != null) window.__repcheckLastGameOid = { oid: String(info.oid), at: Date.now() };
+        return;
+      }
+      if (cap.bytes + body.length > CAP_MAX) return;
       if (info.kind === 'course') { const bid = info.bid || currentCourseId(); if (bid && bid !== cap.bid) resetCap(bid); if (!cap.bid) cap.bid = bid || null; cap.courseText = body; cap.bytes += body.length; }
       else if (info.kind === 'list') { if (info.bid && info.bid !== cap.bid) resetCap(info.bid); if (!cap.bid && info.bid) cap.bid = info.bid; if (info.lid != null) { cap.lists[info.lid] = body; cap.bytes += body.length; for (const oid of parseLineOids(body)) cap.oidToLid[oid] = info.lid; } harvestFromList(info.bid || cap.bid || currentCourseId(), body); }
       else if (info.kind === 'game') {
@@ -2459,7 +2504,7 @@
       updatePanel();
       if (autoImport) scheduleAutoImport();
     }
-    const RELEVANT = /\/api\/v1\/(getCourse|getList|getGame)(\?|$)/;
+    const RELEVANT = /\/api\/v1\/(getCourse|getList|getGame|getReview)(\?|$)/;
     const origFetch = window.fetch;
     if (typeof origFetch === 'function') {
       window.fetch = function (...args) {

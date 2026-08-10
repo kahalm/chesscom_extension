@@ -557,7 +557,7 @@
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') flush(true);
   });
-  window.addEventListener('pagehide', () => { flush(true); flushProblemMoves(); });
+  window.addEventListener('pagehide', () => { flush(true); flushProblemMoves(); flushReviewLines(); });
 
   // ---- „Remember line"-Bridge (MAIN-World chessable-fen.js → hier → RookHub) ----
   // chessable-fen.js (Page-Kontext) postet die FEN; hier (isoliert) haengen
@@ -747,6 +747,66 @@
     queueProblemEntry(bid, entry);
   }
 
+  // ===== getReview-Linien ernten =====================================================
+  // getReview ist der TRAININGS-Endpoint: ein Call je trainierter Linie mit voller Zugfolge +
+  // Alternativen + Kommentaren + Pfeilen. Das ROHE JSON wird PARALLEL zu getGame an RookHub
+  // geschickt (POST /api/extension/chessable/review-lines) und dort als Lücken-Füller abgelegt:
+  // baut RookHub den Kurs auf, gewinnt ein vorhandener getGame-Eintrag, sonst füllt getReview die
+  // Lücke → der Kurs vervollständigt sich nach und nach beim Durchtrainieren. Session-Dedupe +
+  // Batch halten den Traffic klein; best-effort (kein Re-Queue bei Fehler — der nächste Review kommt).
+  const reviewPending = new Map();   // `${bid}|${oid}` → { bid, oid, json }
+  const reviewSent = new Set();      // gleicher Key → in DIESER Session bereits erfolgreich gesendet
+  let reviewFlushTimer = null;
+  const REVIEW_JSON_MAX = 512 * 1024;   // je Linie (server-seitiger Cap ist 256 KB; hier großzügiger vorfiltern)
+
+  function queueReviewLine(bid, oid, json) {
+    if (!bid || !oid || typeof json !== 'string') return;
+    if (!json.trim() || json.trim() === '{}') return;
+    if (json.length > REVIEW_JSON_MAX) return;
+    const key = bid + '|' + oid;
+    if (reviewSent.has(key)) return;   // schon gesendet → nichts tun
+    reviewPending.set(key, { bid: String(bid), oid: String(oid), json });
+    if (!reviewFlushTimer) reviewFlushTimer = setTimeout(flushReviewLines, 15000);
+  }
+
+  async function flushReviewLines() {
+    reviewFlushTimer = null;
+    if (!reviewPending.size) return;
+    const cfg = await readConfig();
+    if (!cfg || !cfg.url || !cfg.token) { reviewPending.clear(); return; }
+    const baseUrl = String(cfg.url).replace(/\/$/, '');
+    // je bid ein Batch (max 50 Linien — Rest im nächsten Flush; getReview-JSON ist groß)
+    const byBid = new Map();
+    for (const [key, v] of reviewPending) {
+      if (!byBid.has(v.bid)) byBid.set(v.bid, []);
+      const bucket = byBid.get(v.bid);
+      if (bucket.length < 50) { bucket.push([key, v]); reviewPending.delete(key); }
+    }
+    for (const [bid, items] of byBid) {
+      const body = JSON.stringify({ bid, entries: items.map(([, v]) => ({ oid: v.oid, json: v.json })) });
+      try {
+        chrome.runtime.sendMessage({
+          type: 'rookhub-fetch',
+          url: baseUrl + '/api/extension/chessable/review-lines',
+          method: 'POST',
+          headers: {
+            'Authorization': 'Bearer ' + cfg.token,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+          },
+          body,
+          expect: 'json',
+        }, (resp) => {
+          if (!chrome.runtime.lastError && resp && resp.ok) {
+            for (const [key] of items) reviewSent.add(key);
+          }
+          // Fehlschlag: bewusst NICHT re-queuen — der nächste Review derselben Linie bringt es erneut.
+        });
+      } catch (e) { /* still */ }
+    }
+    if (reviewPending.size && !reviewFlushTimer) reviewFlushTimer = setTimeout(flushReviewLines, 15000);
+  }
+
   // MAIN-World chessable-capture.js → hier: rohe Kurs-API-Antworten puffern (nur source+origin-geprüft).
   window.addEventListener('message', (e) => {
     if (e.source !== window || e.origin !== location.origin || !e.data || e.data.__repcheck !== 'chessable-capture') return;
@@ -754,6 +814,14 @@
     const info = Crawl.classifyChessableApi(e.data.url);
     const body = e.data.body;
     if (!info || typeof body !== 'string') return;
+    // getReview läuft NEBEN dem Kurs-Mitschnitt-Puffer (eigene Egress-Bahn) — nicht gegen CAP_MAX_BYTES
+    // zählen und nicht in cap.* puffern; nur an RookHub weiterreichen.
+    if (info.kind === 'review') {
+      queueReviewLine(info.bid || cap.bid || currentCourseId(), info.oid, body);
+      // beim Training ist die zuletzt reviewte oid die gerade trainierte Linie (wie getGame)
+      if (!crawling && info.oid != null) { lastGameOid = String(info.oid); lastGameOidAt = now(); }
+      return;
+    }
     if (cap.bytes + body.length > CAP_MAX_BYTES) return;
     if (info.kind === 'course') {
       const bid = info.bid || currentCourseId();

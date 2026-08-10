@@ -7,8 +7,12 @@
 //   getCourse?uid&bid            → { course: { data: [ { id: <lid> }, … ] } }        (Kapitel-lids, in Reihenfolge)
 //   getList?uid&bid&lid=<lid>    → { list: { name, title, data: [ { id: <oid>, name } ] } }  (Linien-oids je Kapitel)
 //   getGame?lng=en&uid&oid=<oid> → { game: { … } }                                   (eine Linie)
+//   getReview?uid&bid&lid&oid    → { lesson: { moves: […] }, … }                      (eine trainierte Linie)
 // Der fetch-freie piratechess-Parser (POST /course/parse) nimmt je Kapitel die ROHE getList-Antwort
 // (chapterJson) + die ROHEN getGame-Antworten (lines[]) in getList-Reihenfolge und erzeugt das PGN.
+// getReview ist der TRAININGS-Endpoint (ein Call pro trainierter Linie, mit voller Zugfolge +
+// Alternativen + Kommentaren + Pfeilen) — sein Roh-JSON wird parallel zu getGame an RookHub geschickt
+// und dort als Lücken-Füller abgelegt (POST /api/extension/chessable/review-lines).
 
 (function (root) {
   'use strict';
@@ -22,6 +26,7 @@
     if (p.endsWith('/api/v1/getCourse')) return { kind: 'course', bid: u.searchParams.get('bid') };
     if (p.endsWith('/api/v1/getList')) return { kind: 'list', bid: u.searchParams.get('bid'), lid: u.searchParams.get('lid') };
     if (p.endsWith('/api/v1/getGame')) return { kind: 'game', oid: u.searchParams.get('oid') };
+    if (p.endsWith('/api/v1/getReview')) return { kind: 'review', bid: u.searchParams.get('bid'), oid: u.searchParams.get('oid') };
     return null;
   }
 

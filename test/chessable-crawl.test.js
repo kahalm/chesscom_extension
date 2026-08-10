@@ -13,6 +13,9 @@ test('classifyChessableApi recognizes getCourse/getList/getGame with params', ()
   assert.deepEqual(
     classifyChessableApi('https://www.chessable.com/api/v1/getGame?lng=en&uid=1&oid=99'),
     { kind: 'game', oid: '99' });
+  assert.deepEqual(
+    classifyChessableApi('https://www.chessable.com/api/v1/getReview?uid=790927&bid=228856&lid=36&oid=36730415'),
+    { kind: 'review', bid: '228856', oid: '36730415' });
 });
 
 test('classifyChessableApi ignores non-chessable / non-course URLs', () => {
