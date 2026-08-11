@@ -163,7 +163,39 @@
       tag: el.tagName, id: el.id || null, class: String(el.className).slice(0, 80) || null,
       rect: rectOf(el), zIndex: getComputedStyle(el).zIndex, position: getComputedStyle(el).position,
     })));
+    sammle('pageHtml', () => collectPageHtml());
     return data;
+  }
+
+  /** GANZER Seiten-DOM — für UI-Platzierung auf LIST-Seiten (Kurs-/Kapitelübersicht), die die
+   *  brett-fokussierten Sammler NICHT erfassen (bodyChildren ist nur 1 Ebene tief + gekappt). Geklont
+   *  und entrümpelt: script/style/svg/canvas/link/noscript raus, das Brett (anderswo erfasst) und
+   *  RepChecks EIGENE Overlays (`#repcheck-*`, `.rc-*`) raus, inline-`style` + `data:`-URIs raus —
+   *  die Struktur bleibt (Tags, `class`, `id`, `href`, `data-*`, `oid`/`lid`), also genau die Anker
+   *  fürs Overlay. JWTs zensiert. Kopf+Ende gedeckelt (Dev-Dump). */
+  function collectPageHtml() {
+    const body = document.body;
+    if (!body) return { gefunden: false };
+    const klon = body.cloneNode(true);
+    const drop = 'script,style,noscript,svg,canvas,link,template,iframe,'
+      + '#board,[class*="chessboard"],[data-square],'
+      + '[id^="repcheck-"],[class^="rc-"],[class*=" rc-"]';
+    for (const el of klon.querySelectorAll(drop)) el.remove();
+    for (const el of klon.querySelectorAll('*')) {
+      el.removeAttribute('style');
+      for (const a of ['src', 'href', 'srcset', 'xlink:href']) {
+        const v = el.getAttribute && el.getAttribute(a);
+        if (v && /^data:/i.test(v)) el.setAttribute(a, 'data:…');
+      }
+    }
+    const html = zensiereText(klon.outerHTML);
+    const HEAD = 500000, TAIL = 40000;
+    return {
+      gefunden: true,
+      len: html.length,
+      html: html.slice(0, HEAD),
+      ende: html.length > HEAD ? html.slice(-TAIL) : null,
+    };
   }
 
   // ── Sammler für die drei offenen Fragen ─────────────────────────────────

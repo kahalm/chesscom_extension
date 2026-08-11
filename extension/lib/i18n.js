@@ -208,8 +208,6 @@ const RC_MESSAGES = {
     // — ✓/○-Marker an Chessables eigener Linienliste —
     'progress.onRookhub': 'On RookHub',
     'progress.notOnRookhub': 'Not on RookHub yet',
-    'progress.cachedCount': '{done}/{total} lines cached on RookHub',
-    'progress.cachedCountShort': '{count} lines cached on RookHub',
 
     // — Fehlertexte —
     'err.noBackground': 'no response from the background worker',
@@ -412,8 +410,6 @@ const RC_MESSAGES = {
     'tools.savedWithLink': 'Gespeichert · Teilen-Link kopiert',
     'progress.onRookhub': 'Auf RookHub',
     'progress.notOnRookhub': 'Noch nicht auf RookHub',
-    'progress.cachedCount': '{done}/{total} Linien auf RookHub gecacht',
-    'progress.cachedCountShort': '{count} Linien auf RookHub gecacht',
 
     'err.noBackground': 'keine Antwort vom Background-Worker',
     'err.tokenInvalid': 'Token ungültig oder abgelaufen.',
@@ -642,8 +638,6 @@ const RC_MESSAGES = {
     'menu.chessableTokenCopied': 'RepCheck: Chessable token kopiran u međuspremnik.',
     'progress.onRookhub': 'Na RookHubu',
     'progress.notOnRookhub': 'Još nije na RookHubu',
-    'progress.cachedCount': '{done}/{total} linija spremljeno na RookHub',
-    'progress.cachedCountShort': '{count} linija spremljeno na RookHub',
   },
 };
 
