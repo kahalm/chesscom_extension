@@ -1324,11 +1324,17 @@
   let vizRepositionRaf = 0;
   let vizResizeObserver = null;
 
+  // Diagnose-Schalter fürs Einfrieren (Prototyp): loggt in die Browser-Konsole, was passiert.
+  const VIZ_DEBUG = true;
+  function vizLog(...a) { if (VIZ_DEBUG) { try { console.log('[RepCheck freeze]', ...a); } catch (e) {} } }
+
   function vizBoardSrc() {
-    const host = document.getElementById('board')
-      || document.querySelector('[data-square]')?.closest('#board, [class*="chessboard"]');
-    if (!host) return null;
-    return host.querySelector('[class*="chessboard-"]') || host.firstElementChild || host;
+    // Das GANZE #board klonen (nicht nur das innere Brett) — so trägt der Klon alle Theme-Klassen/
+    // CSS-Variablen, die Feldfarben rendern sonst evtl. nicht (dann sähe man das Live-Brett durch).
+    return document.getElementById('board')
+      || document.querySelector('[data-square]')?.closest('#board, [class*="chessboard"]')
+      || document.querySelector('[data-square]')
+      || null;
   }
 
   function vizReposition() {
@@ -1353,10 +1359,13 @@
 
   function freezeOn(btn) {
     const src = vizBoardSrc();
-    if (!src || !src.getBoundingClientRect().width) { flash(btn, 'Kein Brett', '#c62828'); return false; }
+    const r0 = src ? src.getBoundingClientRect() : null;
+    vizLog('freezeOn: src=', src, 'class=', src && src.className, 'rect=', r0 && { l: r0.left, t: r0.top, w: r0.width, h: r0.height },
+      'bodyPos=', getComputedStyle(document.body).position, 'scroll=', window.scrollX, window.scrollY);
+    if (!src || !r0 || !r0.width) { flash(btn, 'Kein Brett', '#c62828'); vizLog('ABBRUCH: kein Brett/Rect'); return false; }
     freezeOff();
     vizSrc = src;
-    vizCloneWidth = src.getBoundingClientRect().width;
+    vizCloneWidth = r0.width;
     const clone = src.cloneNode(true);
     clone.querySelectorAll('[id]').forEach((el) => el.removeAttribute('id'));
     clone.removeAttribute('id');
@@ -1371,6 +1380,11 @@
     vizOverlay = overlay;
     vizFrozen = true;
     vizReposition();
+    const or = overlay.getBoundingClientRect();
+    const cr = clone.getBoundingClientRect();
+    vizLog('overlay gesetzt: overlayRect=', { l: or.left, t: or.top, w: or.width, h: or.height },
+      'cloneRect=', { l: cr.left, t: cr.top, w: cr.width, h: cr.height },
+      'cloneKinder=', clone.childElementCount, 'figuren=', clone.querySelectorAll('[data-piece]').length);
     window.addEventListener('scroll', vizRepositionThrottled, true);
     window.addEventListener('resize', vizRepositionThrottled, true);
     try { vizResizeObserver = new ResizeObserver(vizRepositionThrottled); vizResizeObserver.observe(src); } catch (e) { /* ok */ }
