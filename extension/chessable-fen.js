@@ -1307,32 +1307,56 @@
   });
 
   // ===== Figuren einfrieren / Visualisierung (Prototyp) ====================================
-  // „Ganze Linie einfrieren": ein STATISCHER Klon des Bretts wird als undurchsichtiges Overlay über
-  // das echte Brett gelegt (pointer-events:none → Klicks gehen durch, die Chessable-Lektion läuft
-  // ganz normal weiter), sichtbar bleibt aber die Ausgangsstellung. Chessable rendert bei jedem Zug
-  // neu; der Klon ist ein eingefrorener Schnappschuss. Bei einer NEUEN Linie (viele Felder ändern sich
-  // auf einmal) und bei Größenänderung wird automatisch neu eingefroren. Nochmal klicken = aufdecken.
-  // Chessables Brett ist ein Grid aus `[data-square]`-Divs mit Inline-SVG-Figuren → der Klon rendert
-  // die Stellung selbsttragend (Feldfarben + Figuren), ohne dass ich sie aus einer FEN rechnen muss.
+  // „Ganze Linie einfrieren": ein STATISCHER Klon des Bretts liegt als undurchsichtiges Overlay über
+  // dem echten Brett (pointer-events:none → Klicks gehen durch, die Chessable-Lektion läuft normal
+  // weiter), sichtbar bleibt die Ausgangsstellung. Nochmal klicken = aufdecken.
+  //
+  // WICHTIG (v2 des Prototyps): Das Overlay hängt am `document.body` per `position:absolute`, NICHT im
+  // Brett-Container — Chessables React rendert das Brett bei jedem Zug neu und würde ein darin liegendes
+  // Overlay entfernen (Bug „Figuren fahren weiter"). Und es wird NICHT mehr bei jedem Zug neu
+  // eingefroren (die alte Mutations-Heuristik fror sich selbst auf die bewegte Stellung neu ein). Der
+  // Klon bleibt jetzt wirklich stehen; nur bei Größe/Scrollen wird er nachpositioniert. Für eine NEUE
+  // Linie einmal aus- und wieder einschalten (Auto-Erkennung kommt, wenn die Basis steht).
   let vizFrozen = false;
   let vizOverlay = null;
-  let vizObserver = null;
+  let vizSrc = null;          // das echte Brett-Element, dessen Rect wir nachfahren
+  let vizCloneWidth = 0;      // natürliche Breite des Klons (für die Skalierung bei Resize)
+  let vizRepositionRaf = 0;
   let vizResizeObserver = null;
-  let vizRefreezeTimer = null;
-  let vizHostPrevPosition = null;
 
-  function vizBoardHost() {
-    return document.getElementById('board')
-      || document.querySelector('[data-square]')?.closest('#board, [class*="chessboard"]')
-      || null;
+  function vizBoardSrc() {
+    const host = document.getElementById('board')
+      || document.querySelector('[data-square]')?.closest('#board, [class*="chessboard"]');
+    if (!host) return null;
+    return host.querySelector('[class*="chessboard-"]') || host.firstElementChild || host;
   }
 
-  function vizBuildOverlay() {
-    const host = vizBoardHost();
-    if (!host) return false;
-    const src = host.querySelector('[class*="chessboard-"]') || host.firstElementChild;
-    if (!src || src.classList.contains('rc-viz-overlay')) return false;
-    if (vizOverlay) { vizOverlay.remove(); vizOverlay = null; }
+  function vizReposition() {
+    if (!vizOverlay || !vizSrc || !vizSrc.isConnected) return;
+    const r = vizSrc.getBoundingClientRect();
+    if (!r.width) return;
+    Object.assign(vizOverlay.style, {
+      left: (r.left + window.scrollX) + 'px', top: (r.top + window.scrollY) + 'px',
+      width: r.width + 'px', height: r.height + 'px',
+    });
+    const clone = vizOverlay.firstElementChild;
+    if (clone && vizCloneWidth) {
+      const s = r.width / vizCloneWidth;
+      clone.style.transformOrigin = 'top left';
+      clone.style.transform = Math.abs(s - 1) > 0.01 ? `scale(${s})` : '';
+    }
+  }
+  function vizRepositionThrottled() {
+    if (vizRepositionRaf) return;
+    vizRepositionRaf = requestAnimationFrame(() => { vizRepositionRaf = 0; vizReposition(); });
+  }
+
+  function freezeOn(btn) {
+    const src = vizBoardSrc();
+    if (!src || !src.getBoundingClientRect().width) { flash(btn, 'Kein Brett', '#c62828'); return false; }
+    freezeOff();
+    vizSrc = src;
+    vizCloneWidth = src.getBoundingClientRect().width;
     const clone = src.cloneNode(true);
     clone.querySelectorAll('[id]').forEach((el) => el.removeAttribute('id'));
     clone.removeAttribute('id');
@@ -1340,65 +1364,32 @@
     const overlay = document.createElement('div');
     overlay.className = 'rc-viz-overlay';
     Object.assign(overlay.style, {
-      position: 'absolute', inset: '0', zIndex: '4', pointerEvents: 'none', overflow: 'hidden',
+      position: 'absolute', zIndex: '2147483000', pointerEvents: 'none', overflow: 'hidden', margin: '0',
     });
     overlay.appendChild(clone);
-    if (vizHostPrevPosition === null) vizHostPrevPosition = host.style.position || '';
-    if (getComputedStyle(host).position === 'static') host.style.position = 'relative';
-    host.appendChild(overlay);
+    document.body.appendChild(overlay);
     vizOverlay = overlay;
+    vizFrozen = true;
+    vizReposition();
+    window.addEventListener('scroll', vizRepositionThrottled, true);
+    window.addEventListener('resize', vizRepositionThrottled, true);
+    try { vizResizeObserver = new ResizeObserver(vizRepositionThrottled); vizResizeObserver.observe(src); } catch (e) { /* ok */ }
     return true;
-  }
-
-  function scheduleRefreeze(ms) {
-    if (vizRefreezeTimer) clearTimeout(vizRefreezeTimer);
-    vizRefreezeTimer = setTimeout(() => { vizRefreezeTimer = null; if (vizFrozen) vizBuildOverlay(); }, ms);
-  }
-
-  function vizStartObservers() {
-    const host = vizBoardHost();
-    if (!host) return;
-    try {
-      vizResizeObserver = new ResizeObserver(() => { if (vizFrozen) scheduleRefreeze(80); });
-      vizResizeObserver.observe(host);
-    } catch (e) { /* ResizeObserver evtl. nicht da — dann nur Mutations-Refreeze */ }
-    // Neue Linie = grosse Aenderung (viele Felder auf einmal); ein einzelner Zug beruehrt nur ~2.
-    // Eigene Overlay-Mutationen werden ausgeklammert, sonst friert es sich selbst neu ein.
-    vizObserver = new MutationObserver((records) => {
-      if (!vizFrozen) return;
-      const squares = new Set();
-      for (const r of records) {
-        const t = r.target;
-        if (t && t.closest && t.closest('.rc-viz-overlay')) continue;
-        const sq = t && t.closest ? t.closest('[data-square]') : null;
-        if (sq) squares.add(sq);
-      }
-      if (squares.size >= 5) scheduleRefreeze(120);
-    });
-    vizObserver.observe(host, { childList: true, subtree: true });
-  }
-
-  function vizStopObservers() {
-    if (vizObserver) { vizObserver.disconnect(); vizObserver = null; }
-    if (vizResizeObserver) { try { vizResizeObserver.disconnect(); } catch (e) {} vizResizeObserver = null; }
-    if (vizRefreezeTimer) { clearTimeout(vizRefreezeTimer); vizRefreezeTimer = null; }
   }
 
   function freezeOff() {
     vizFrozen = false;
-    vizStopObservers();
+    if (vizResizeObserver) { try { vizResizeObserver.disconnect(); } catch (e) {} vizResizeObserver = null; }
+    window.removeEventListener('scroll', vizRepositionThrottled, true);
+    window.removeEventListener('resize', vizRepositionThrottled, true);
+    if (vizRepositionRaf) { cancelAnimationFrame(vizRepositionRaf); vizRepositionRaf = 0; }
     if (vizOverlay) { vizOverlay.remove(); vizOverlay = null; }
-    const host = vizBoardHost();
-    if (host && vizHostPrevPosition !== null) { host.style.position = vizHostPrevPosition; vizHostPrevPosition = null; }
+    vizSrc = null; vizCloneWidth = 0;
   }
 
   function toggleFreeze(btn) {
-    if (vizFrozen) { freezeOff(); }
-    else {
-      if (!vizBuildOverlay()) { flash(btn, 'Kein Brett', '#c62828'); return; }
-      vizFrozen = true;
-      vizStartObservers();
-    }
+    if (vizFrozen) freezeOff();
+    else if (!freezeOn(btn)) return;
     if (btn) { btn.style.background = vizFrozen ? '#0288d1' : '#546e7a'; btn.setAttribute('aria-pressed', vizFrozen ? 'true' : 'false'); }
   }
 
@@ -1446,7 +1437,9 @@
   // Seit v1.14.0: die FEN-Tools erscheinen NUR im Practice-Mode
   // (chessable.com/practice/…) — auf Kurs-Übersichten/Buch-Seiten o. Ä. nicht.
   function isPracticeMode() {
-    return /^\/practice(\/|$)/.test(location.pathname);
+    // Brett-Werkzeuge (inkl. Einfrieren/Visualisierung) auf /practice UND /learn — beide zeigen ein
+    // Brett zum Durchspielen; das Einfrieren soll in beiden gehen.
+    return /^\/(practice|learn)(\/|$)/.test(location.pathname);
   }
 
   function removeUi() {
