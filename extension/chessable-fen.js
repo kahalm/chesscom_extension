@@ -1238,26 +1238,14 @@
     zPanel.addEventListener('click', () => toggleZenPanel(zPanel));
     zenPanelBtn = zPanel;
 
-    // Figuren einfrieren (Visualisierung, Prototyp): friert die aktuelle Stellung als Overlay ein,
-    // das Brett bleibt beim Durchspielen stehen; nochmal klicken deckt auf.
-    const freezeBtn = document.createElement('button');
-    freezeBtn.type = 'button';
-    freezeBtn.textContent = '🧊';
-    styleButton(freezeBtn, '#546e7a');
-    Object.assign(freezeBtn.style, { fontSize: '15px', lineHeight: '1', padding: '8px 10px' });
-    freezeBtn.title = 'Figuren einfrieren (Visualisierung) — nochmal klicken zum Aufdecken';
-    freezeBtn.setAttribute('aria-pressed', 'false');
-    freezeBtn.addEventListener('click', () => toggleFreeze(freezeBtn));
-
     // XP-Anzeige vorerst deaktiviert (kommt später wieder) — Badge + Tracker aus.
-    btnRefs = { copyFen: copyBtn, analyse: analyseBtn, searchFen: searchBtn, refresh: refreshBtn, remember: rememberBtn, freeze: freezeBtn, fullscreen: fullscreenBtn };
+    btnRefs = { copyFen: copyBtn, analyse: analyseBtn, searchFen: searchBtn, refresh: refreshBtn, remember: rememberBtn, fullscreen: fullscreenBtn };
     wrap.appendChild(feedbackBadge);
     wrap.appendChild(copyBtn);
     wrap.appendChild(analyseBtn);
     wrap.appendChild(searchBtn);
     wrap.appendChild(refreshBtn);
     wrap.appendChild(rememberBtn);
-    wrap.appendChild(freezeBtn);
     wrap.appendChild(zHint);
     wrap.appendChild(zAnalyse);
     wrap.appendChild(zPanel);
@@ -1277,7 +1265,7 @@
   // chrome.*-Zugriff → chessable-activity.js (isoliert) spiegelt die Einstellung per postMessage
   // hierher (Same-Window + Same-Origin geprüft; kein Secret).
   let btnRefs = {};
-  let buttonSettings = { copyFen: true, analyse: true, searchFen: true, refresh: true, remember: true, freeze: true, fullscreen: true };
+  let buttonSettings = { copyFen: true, analyse: true, searchFen: true, refresh: true, remember: true, fullscreen: true };
   function applyButtonSettings() {
     for (const key of Object.keys(btnRefs)) {
       const btn = btnRefs[key];
@@ -1290,7 +1278,7 @@
   window.addEventListener('message', (e) => {
     if (e.source !== window || e.origin !== location.origin || !e.data || e.data.__repcheck !== 'chessable-buttons') return;
     const s = e.data.settings;
-    if (s && typeof s === 'object') { buttonSettings = Object.assign({ copyFen: true, analyse: true, searchFen: true, refresh: true, remember: true, freeze: true, fullscreen: true }, s); applyButtonSettings(); }
+    if (s && typeof s === 'object') { buttonSettings = Object.assign({ copyFen: true, analyse: true, searchFen: true, refresh: true, remember: true, fullscreen: true }, s); applyButtonSettings(); }
   });
 
   // Die RookHub-URL liegt extension-privat in chrome.storage.local (nur isolierte Welt lesbar);
@@ -1305,107 +1293,6 @@
     if (e.source !== window || e.origin !== location.origin || !e.data || e.data.__repcheck !== 'rookhub-url') return;
     if (typeof e.data.url === 'string' && e.data.url) rookhubBaseUrl = e.data.url;
   });
-
-  // ===== Figuren einfrieren / Visualisierung (Prototyp) ====================================
-  // „Ganze Linie einfrieren": ein STATISCHER Klon des Bretts liegt als undurchsichtiges Overlay über
-  // dem echten Brett (pointer-events:none → Klicks gehen durch, die Chessable-Lektion läuft normal
-  // weiter), sichtbar bleibt die Ausgangsstellung. Nochmal klicken = aufdecken.
-  //
-  // WICHTIG (v2 des Prototyps): Das Overlay hängt am `document.body` per `position:absolute`, NICHT im
-  // Brett-Container — Chessables React rendert das Brett bei jedem Zug neu und würde ein darin liegendes
-  // Overlay entfernen (Bug „Figuren fahren weiter"). Und es wird NICHT mehr bei jedem Zug neu
-  // eingefroren (die alte Mutations-Heuristik fror sich selbst auf die bewegte Stellung neu ein). Der
-  // Klon bleibt jetzt wirklich stehen; nur bei Größe/Scrollen wird er nachpositioniert. Für eine NEUE
-  // Linie einmal aus- und wieder einschalten (Auto-Erkennung kommt, wenn die Basis steht).
-  let vizFrozen = false;
-  let vizOverlay = null;
-  let vizSrc = null;          // das echte Brett-Element, dessen Rect wir nachfahren
-  let vizCloneWidth = 0;      // natürliche Breite des Klons (für die Skalierung bei Resize)
-  let vizRepositionRaf = 0;
-  let vizResizeObserver = null;
-
-  // Diagnose-Schalter fürs Einfrieren (Prototyp): loggt in die Browser-Konsole, was passiert.
-  const VIZ_DEBUG = true;
-  function vizLog(...a) { if (VIZ_DEBUG) { try { console.log('[RepCheck freeze]', ...a); } catch (e) {} } }
-
-  function vizBoardSrc() {
-    // Das GANZE #board klonen (nicht nur das innere Brett) — so trägt der Klon alle Theme-Klassen/
-    // CSS-Variablen, die Feldfarben rendern sonst evtl. nicht (dann sähe man das Live-Brett durch).
-    return document.getElementById('board')
-      || document.querySelector('[data-square]')?.closest('#board, [class*="chessboard"]')
-      || document.querySelector('[data-square]')
-      || null;
-  }
-
-  function vizReposition() {
-    if (!vizOverlay || !vizSrc || !vizSrc.isConnected) return;
-    const r = vizSrc.getBoundingClientRect();
-    if (!r.width) return;
-    Object.assign(vizOverlay.style, {
-      left: (r.left + window.scrollX) + 'px', top: (r.top + window.scrollY) + 'px',
-      width: r.width + 'px', height: r.height + 'px',
-    });
-    const clone = vizOverlay.firstElementChild;
-    if (clone && vizCloneWidth) {
-      const s = r.width / vizCloneWidth;
-      clone.style.transformOrigin = 'top left';
-      clone.style.transform = Math.abs(s - 1) > 0.01 ? `scale(${s})` : '';
-    }
-  }
-  function vizRepositionThrottled() {
-    if (vizRepositionRaf) return;
-    vizRepositionRaf = requestAnimationFrame(() => { vizRepositionRaf = 0; vizReposition(); });
-  }
-
-  function freezeOn(btn) {
-    const src = vizBoardSrc();
-    const r0 = src ? src.getBoundingClientRect() : null;
-    vizLog('freezeOn: src=', src, 'class=', src && src.className, 'rect=', r0 && { l: r0.left, t: r0.top, w: r0.width, h: r0.height },
-      'bodyPos=', getComputedStyle(document.body).position, 'scroll=', window.scrollX, window.scrollY);
-    if (!src || !r0 || !r0.width) { flash(btn, 'Kein Brett', '#c62828'); vizLog('ABBRUCH: kein Brett/Rect'); return false; }
-    freezeOff();
-    vizSrc = src;
-    vizCloneWidth = r0.width;
-    const clone = src.cloneNode(true);
-    clone.querySelectorAll('[id]').forEach((el) => el.removeAttribute('id'));
-    clone.removeAttribute('id');
-    clone.style.pointerEvents = 'none';
-    const overlay = document.createElement('div');
-    overlay.className = 'rc-viz-overlay';
-    Object.assign(overlay.style, {
-      position: 'absolute', zIndex: '2147483000', pointerEvents: 'none', overflow: 'hidden', margin: '0',
-    });
-    overlay.appendChild(clone);
-    document.body.appendChild(overlay);
-    vizOverlay = overlay;
-    vizFrozen = true;
-    vizReposition();
-    const or = overlay.getBoundingClientRect();
-    const cr = clone.getBoundingClientRect();
-    vizLog('overlay gesetzt: overlayRect=', { l: or.left, t: or.top, w: or.width, h: or.height },
-      'cloneRect=', { l: cr.left, t: cr.top, w: cr.width, h: cr.height },
-      'cloneKinder=', clone.childElementCount, 'figuren=', clone.querySelectorAll('[data-piece]').length);
-    window.addEventListener('scroll', vizRepositionThrottled, true);
-    window.addEventListener('resize', vizRepositionThrottled, true);
-    try { vizResizeObserver = new ResizeObserver(vizRepositionThrottled); vizResizeObserver.observe(src); } catch (e) { /* ok */ }
-    return true;
-  }
-
-  function freezeOff() {
-    vizFrozen = false;
-    if (vizResizeObserver) { try { vizResizeObserver.disconnect(); } catch (e) {} vizResizeObserver = null; }
-    window.removeEventListener('scroll', vizRepositionThrottled, true);
-    window.removeEventListener('resize', vizRepositionThrottled, true);
-    if (vizRepositionRaf) { cancelAnimationFrame(vizRepositionRaf); vizRepositionRaf = 0; }
-    if (vizOverlay) { vizOverlay.remove(); vizOverlay = null; }
-    vizSrc = null; vizCloneWidth = 0;
-  }
-
-  function toggleFreeze(btn) {
-    if (vizFrozen) freezeOff();
-    else if (!freezeOn(btn)) return;
-    if (btn) { btn.style.background = vizFrozen ? '#0288d1' : '#546e7a'; btn.setAttribute('aria-pressed', vizFrozen ? 'true' : 'false'); }
-  }
 
   // „Remember line": FEN + Kontext per window.postMessage an die isolierte Welt
   // (chessable-activity.js), die den Egress mit RookHub-Config + Background-Worker
@@ -1451,13 +1338,10 @@
   // Seit v1.14.0: die FEN-Tools erscheinen NUR im Practice-Mode
   // (chessable.com/practice/…) — auf Kurs-Übersichten/Buch-Seiten o. Ä. nicht.
   function isPracticeMode() {
-    // Brett-Werkzeuge (inkl. Einfrieren/Visualisierung) auf /practice UND /learn — beide zeigen ein
-    // Brett zum Durchspielen; das Einfrieren soll in beiden gehen.
-    return /^\/(practice|learn)(\/|$)/.test(location.pathname);
+    return /^\/practice(\/|$)/.test(location.pathname);
   }
 
   function removeUi() {
-    freezeOff();   // Practice-Mode verlassen → Overlay + Beobachter weg
     document.getElementById(CONTAINER_ID)?.remove();
     if (poolTimer) { clearInterval(poolTimer); poolTimer = null; }
     document.getElementById(POOL_PANEL_ID)?.remove();
