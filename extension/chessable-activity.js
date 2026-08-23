@@ -557,7 +557,7 @@
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') flush(true);
   });
-  window.addEventListener('pagehide', () => { flush(true); flushProblemMoves(); flushReviewLines(); });
+  window.addEventListener('pagehide', () => { flush(true); flushProblemMoves(); flushReviewLines(); flushSessionMoves(); });
 
   // ---- „Remember line"-Bridge (MAIN-World chessable-fen.js → hier → RookHub) ----
   // chessable-fen.js (Page-Kontext) postet die FEN; hier (isoliert) haengen
@@ -747,6 +747,70 @@
     queueProblemEntry(bid, entry);
   }
 
+  // ===== Sitzungszüge (saveProgress) ernten ===========================================
+  // Chessables eigener Session-Report (POST /api/v1/saveProgressAndReturnNewProgressInfo)
+  // trägt je Halbzug das SITZUNGS-Ergebnis: falsch gespielte Züge (wrong[]), Overstudy-/
+  // Alternative-Flags, Level, Punkte. Mitgeschnitten wird der REQUEST-Body (die Antwort
+  // enthält Konto-Daten und bleibt tabu), je Linie (bid|oid) gruppiert und roh an RookHub
+  // gemeldet (POST /api/extension/chessable/session-moves, append-only Roh-Log — Auswertung
+  // offen). NUR mit RookHub-Token (wie problem-moves); der Anon-Pfad bekommt KEINE Sitzungsdaten.
+  const sessionPending = [];        // { bid, entry: { oid, moves: [...] } }
+  const SESSION_PENDING_MAX = 200;  // Deckel, falls kein Token da ist/Flushes scheitern
+  let sessionFlushTimer = null;
+
+  function harvestFromSaveProgress(body) {
+    let o; try { o = JSON.parse(body); } catch (e) { return; }
+    // `data` ist ein JSON-STRING im Request-JSON: {"uid":…,"data":"{\"moves\":[…]}"}
+    let data = o && o.data;
+    if (typeof data === 'string') { try { data = JSON.parse(data); } catch (e) { return; } }
+    const moves = data && data.moves;
+    if (!Array.isArray(moves)) return;
+    const byKey = new Map();   // `${bid}|${oid}` → { bid, entry }
+    for (const m of moves) {
+      if (!m || m.bid == null || m.oid == null) continue;
+      const bid = String(m.bid);
+      const oid = String(m.oid);
+      const key = bid + '|' + oid;
+      if (!byKey.has(key)) byKey.set(key, { bid, entry: { oid, moves: [] } });
+      byKey.get(key).entry.moves.push(m);
+    }
+    for (const v of byKey.values()) {
+      if (sessionPending.length >= SESSION_PENDING_MAX) break;
+      sessionPending.push(v);
+    }
+    if (sessionPending.length && !sessionFlushTimer) sessionFlushTimer = setTimeout(flushSessionMoves, 15000);
+  }
+
+  async function flushSessionMoves() {
+    sessionFlushTimer = null;
+    if (!sessionPending.length) return;
+    const cfg = await readConfig();
+    if (!cfg || !cfg.url || !cfg.token) { sessionPending.length = 0; return; }
+    const baseUrl = String(cfg.url).replace(/\/$/, '');
+    const byBid = new Map();
+    for (const v of sessionPending.splice(0)) {
+      if (!byBid.has(v.bid)) byBid.set(v.bid, []);
+      byBid.get(v.bid).push(v.entry);
+    }
+    for (const [bid, entries] of byBid) {
+      try {
+        chrome.runtime.sendMessage({
+          type: 'rookhub-fetch',
+          url: baseUrl + '/api/extension/chessable/session-moves',
+          method: 'POST',
+          headers: {
+            'Authorization': 'Bearer ' + cfg.token,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+          },
+          body: JSON.stringify({ bid, entries }),
+          expect: 'json',
+        }, () => { void chrome.runtime.lastError; });
+        // Fehlschlag: bewusst NICHT re-queuen — der nächste Durchlauf bringt frische Daten.
+      } catch (e) { /* still */ }
+    }
+  }
+
   // ===== getReview-Linien ernten =====================================================
   // getReview ist der TRAININGS-Endpoint: ein Call je trainierter Linie mit voller Zugfolge +
   // Alternativen + Kommentaren + Pfeilen. Das ROHE JSON wird PARALLEL zu getGame an RookHub
@@ -877,6 +941,13 @@
   // MAIN-World chessable-capture.js → hier: rohe Kurs-API-Antworten puffern (nur source+origin-geprüft).
   window.addEventListener('message', (e) => {
     if (e.source !== window || e.origin !== location.origin || !e.data || e.data.__repcheck !== 'chessable-capture') return;
+    // Request-Mitschnitte (nur saveProgress): eigener Pfad, laufen NICHT durch classify/cap.*.
+    if (e.data.req) {
+      if (typeof e.data.body === 'string' && /\/api\/v1\/saveProgress/.test(String(e.data.url || ''))) {
+        harvestFromSaveProgress(e.data.body);
+      }
+      return;
+    }
     if (!Crawl) return;
     const info = Crawl.classifyChessableApi(e.data.url);
     const body = e.data.body;

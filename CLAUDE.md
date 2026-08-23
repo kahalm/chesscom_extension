@@ -280,6 +280,18 @@ ab. RookHub claimt die anonym gesammelten Linien, sobald der User seinen Chessab
 - **Privacy/Store**: der Default sendet an den Autor-Server — offengelegt in `PRIVACY.md`/`docs/privacy.md`,
   und NUR nach ausdrücklicher Zustimmung. Beim Ändern nicht die Zustimmungspflicht/Offenlegung entfernen.
 
+**Sitzungszüge → RookHub (v1.54.0):** Neben getReview wird auch der REQUEST von Chessables eigenem
+Session-Report (`POST /api/v1/saveProgressAndReturnNewProgressInfo`) mitgeschnitten — er trägt je Halbzug
+das SITZUNGS-Ergebnis (`wrong[]` = falsch gespielte Züge, `overstudied`, `alternativeSkipped`, `level`,
+`points`). Die ANTWORT dieses Endpoints wird bewusst NICHT angefasst (enthält Konto-Daten: E-Mail,
+Zahlungs-Reste). Capture: `RELEVANT_REQ` in `chessable-capture.js` (fetch `args[1].body`/Request-clone,
+XHR `send`-Argument) → Bridge mit `req:true` → `harvestFromSaveProgress` in `chessable-activity.js`
+(parst `{uid, data}`, `data` ist ein JSON-STRING mit `{moves:[…]}`), gruppiert je (bid|oid) und sendet
+Batches an `POST /api/extension/chessable/session-moves` (RookHub: append-only Roh-Log
+`ChessableSessionMoves`, Auswertung offen). **NUR mit RookHub-Token** (wie problem-moves) — der Anon-Pfad
+bekommt KEINE Sitzungsdaten; entsprechend in PRIVACY.md/docs/privacy.md offengelegt. Userscript:
+hand-gespiegelt in `initChessableBrowserImport` (direkter `fetch`).
+
 **Cached-Count-Overlays (v1.52.0):** `annotateDom` heftet neben den ✓/○-Linien-Markern jetzt auch
 Zähl-Badges: auf `/course/{bid}` pro Kapitel `done/total` (Anker `a[href*="/course/{bid}/{lid}"]`, lid exakt
 aus dem Pfadsegment) + eine Kurs-Gesamtsumme am ersten `h1`; auf der Startseite je Kurs-Karte „🔖 N"

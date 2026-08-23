@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RepCheck — Opening Repertoire Deviation Checker
 // @namespace    https://github.com/kahalm/repcheck
-// @version      1.53.4
+// @version      1.54.0
 // @require      https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js
 // @description  Shows where your game deviates from your opening repertoire (chess.com + lichess, PGN files or RookHub). On chessable.com: copy/search FEN, remember a line to RookHub, show earned XP, report active training time to RookHub, read the API token.
 // @author       kahalm
@@ -2512,7 +2512,54 @@
       }
       if (reviewPending.size && !reviewFlushTimer) reviewFlushTimer = setTimeout(flushReviewLines, 15000);
     }
-    window.addEventListener('pagehide', () => { flushProblemMoves(); flushReviewLines(); });
+    // ===== Sitzungszüge (saveProgress) ernten =====
+    // Chessables Session-Report trägt je Halbzug das SITZUNGS-Ergebnis (wrong[], Overstudy/
+    // Alternative, Level/Punkte). Mitgeschnitten wird der REQUEST-Body (die Antwort enthält
+    // Konto-Daten und bleibt tabu) → gruppiert je Linie → POST /chessable/session-moves
+    // (append-only Roh-Log). NUR mit RookHub-Token — kein Anon-Pfad für Sitzungsdaten.
+    const sessionPending = [];
+    const SESSION_PENDING_MAX = 200;
+    let sessionFlushTimer = null;
+    function harvestFromSaveProgress(body) {
+      let o; try { o = JSON.parse(body); } catch (e) { return; }
+      let data = o && o.data;   // `data` ist ein JSON-STRING im Request-JSON
+      if (typeof data === 'string') { try { data = JSON.parse(data); } catch (e) { return; } }
+      const moves = data && data.moves;
+      if (!Array.isArray(moves)) return;
+      const byKey = new Map();
+      for (const m of moves) {
+        if (!m || m.bid == null || m.oid == null) continue;
+        const bid = String(m.bid), oid = String(m.oid), key = bid + '|' + oid;
+        if (!byKey.has(key)) byKey.set(key, { bid, entry: { oid, moves: [] } });
+        byKey.get(key).entry.moves.push(m);
+      }
+      for (const v of byKey.values()) {
+        if (sessionPending.length >= SESSION_PENDING_MAX) break;
+        sessionPending.push(v);
+      }
+      if (sessionPending.length && !sessionFlushTimer) sessionFlushTimer = setTimeout(flushSessionMoves, 15000);
+    }
+    function flushSessionMoves() {
+      sessionFlushTimer = null;
+      if (!sessionPending.length) return;
+      const cfg = getCfg();
+      if (!cfg || !cfg.url || !cfg.token) { sessionPending.length = 0; return; }
+      const byBid = new Map();
+      for (const v of sessionPending.splice(0)) {
+        if (!byBid.has(v.bid)) byBid.set(v.bid, []);
+        byBid.get(v.bid).push(v.entry);
+      }
+      for (const [bid, entries] of byBid) {
+        fetch(String(cfg.url).replace(/\/$/, '') + '/api/extension/chessable/session-moves', {
+          method: 'POST', mode: 'cors',
+          headers: { 'Authorization': 'Bearer ' + cfg.token, 'Accept': 'application/json', 'Content-Type': 'application/json' },
+          body: JSON.stringify({ bid, entries }),
+        }).catch(() => {});
+        // Fehlschlag: bewusst NICHT re-queuen — der nächste Durchlauf bringt frische Daten.
+      }
+    }
+
+    window.addEventListener('pagehide', () => { flushProblemMoves(); flushReviewLines(); flushSessionMoves(); });
     function getToken() { try { return extractJwt(localStorage.getItem(lsKey)); } catch (e) { return null; } }
     function currentCourseId() {
       const m = /\/courses?\/(\d+)(?:\/|$)/.exec(location.pathname);
@@ -2553,11 +2600,22 @@
       if (autoImport) scheduleAutoImport();
     }
     const RELEVANT = /\/api\/v1\/(getCourse|getList|getGame|getReview)(\?|$)/;
+    // Session-Report: hier interessiert der REQUEST-Body (Sitzungszüge inkl. Fehlversuche);
+    // die ANTWORT wird bewusst NICHT angefasst (enthält Konto-Daten).
+    const RELEVANT_REQ = /\/api\/v1\/saveProgress/;
     const origFetch = window.fetch;
     if (typeof origFetch === 'function') {
       window.fetch = function (...args) {
         const p = origFetch.apply(this, args);
-        try { const a0 = args[0]; const url = (a0 && typeof a0 === 'object' && 'url' in a0) ? a0.url : String(a0 || ''); if (RELEVANT.test(url)) p.then(r => { try { r.clone().text().then(t => absorb(url, t)).catch(() => {}); } catch (e) {} }).catch(() => {}); } catch (e) {}
+        try {
+          const a0 = args[0]; const url = (a0 && typeof a0 === 'object' && 'url' in a0) ? a0.url : String(a0 || '');
+          if (RELEVANT.test(url)) p.then(r => { try { r.clone().text().then(t => absorb(url, t)).catch(() => {}); } catch (e) {} }).catch(() => {});
+          if (RELEVANT_REQ.test(url)) {
+            const a1 = args[1];
+            if (a1 && typeof a1.body === 'string') harvestFromSaveProgress(a1.body);
+            else if (a0 && typeof a0 === 'object' && typeof a0.clone === 'function') a0.clone().text().then(t => harvestFromSaveProgress(t)).catch(() => {});
+          }
+        } catch (e) {}
         return p;
       };
     }
@@ -2565,7 +2623,7 @@
     if (XHR && XHR.prototype) {
       const oOpen = XHR.prototype.open, oSend = XHR.prototype.send;
       XHR.prototype.open = function (m, url, ...rest) { try { this.__rcUrl = String(url || ''); } catch (e) {} return oOpen.call(this, m, url, ...rest); };
-      XHR.prototype.send = function (...a) { try { const url = this.__rcUrl || ''; if (RELEVANT.test(url)) this.addEventListener('load', function () { try { const t = (this.responseType === '' || this.responseType === 'text') ? this.responseText : (this.responseType === 'json' ? JSON.stringify(this.response) : null); if (t) absorb(url, t); } catch (e) {} }); } catch (e) {} return oSend.apply(this, a); };
+      XHR.prototype.send = function (...a) { try { const url = this.__rcUrl || ''; if (RELEVANT_REQ.test(url) && typeof a[0] === 'string') harvestFromSaveProgress(a[0]); if (RELEVANT.test(url)) this.addEventListener('load', function () { try { const t = (this.responseType === '' || this.responseType === 'text') ? this.responseText : (this.responseType === 'json' ? JSON.stringify(this.response) : null); if (t) absorb(url, t); } catch (e) {} }); } catch (e) {} return oSend.apply(this, a); };
     }
 
     function capturedChapters() {

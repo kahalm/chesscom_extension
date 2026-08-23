@@ -17,14 +17,17 @@
   // Nur die Kurs-Struktur-Endpoints (nicht getHomeData/authenticate/…). Klassifikation macht die
   // isolierte Seite über die geteilte lib — hier nur ein billiger Vorfilter.
   const RELEVANT = /\/api\/v1\/(getCourse|getList|getGame|getReview)(\?|$)/;
+  // Session-Report (Sitzungszüge inkl. Fehlversuche): hier interessiert der REQUEST-Body.
+  // Die ANTWORT wird bewusst NICHT weitergereicht — sie enthält Konto-Daten (E-Mail, Zahlungs-Reste).
+  const RELEVANT_REQ = /\/api\/v1\/saveProgress/;
 
-  function forward(url, body) {
+  function forward(url, body, isRequest) {
     if (typeof body !== 'string' || !body) return;
     // Übergroße Antworten kappen wir NICHT (das PGN muss vollständig sein), aber ganz leere/`{}`
     // reichen wir gar nicht erst weiter.
     if (body.trim() === '' || body.trim() === '{}') return;
     try {
-      window.postMessage({ __repcheck: 'chessable-capture', url: String(url), body }, location.origin);
+      window.postMessage({ __repcheck: 'chessable-capture', url: String(url), body, req: !!isRequest }, location.origin);
     } catch (e) { /* ignore */ }
   }
 
@@ -41,6 +44,13 @@
           p.then((resp) => {
             try { resp.clone().text().then((t) => forward(url, t)).catch(() => {}); } catch (e) {}
           }).catch(() => {});
+        }
+        if (RELEVANT_REQ.test(url)) {
+          const a1 = args[1];
+          if (a1 && typeof a1.body === 'string') forward(url, a1.body, true);
+          else if (a0 && typeof a0 === 'object' && typeof a0.clone === 'function') {
+            a0.clone().text().then((t) => forward(url, t, true)).catch(() => {});
+          }
         }
       } catch (e) { /* never break the page */ }
       return p;
@@ -59,6 +69,7 @@
     XHR.prototype.send = function (...args) {
       try {
         const url = this.__repcheckUrl || '';
+        if (RELEVANT_REQ.test(url) && typeof args[0] === 'string') forward(url, args[0], true);
         if (RELEVANT.test(url)) {
           this.addEventListener('load', function () {
             try {
