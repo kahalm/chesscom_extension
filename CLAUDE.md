@@ -291,6 +291,12 @@ Nur mit RookHub-Token (Zähler kommen aus `GET /chessable/progress?bid=`). i18n 
 (Chessables Hint ist ein Icon-DIV mit Glocke, KEIN `<button>` → die alte Text-über-`button`-Suche fand ihn
 nie). Fallback bleibt die Textsuche, jetzt inkl. `div[data-testid]`. Extension `chessable-fen.js` + Userscript.
 
+**Chessable-Next-Button (v1.53.4):** `clickChessableNext` klickt primär `[data-testid="nextLessonButton"]`.
+Chessables Next trägt ZWEI Label-Spans („Next variation" `not-in-mobile` + „Next" `not-in-desktop`) →
+`textContent` ist „Next variationNext" und die exakte Textsuche griff nie („Kein „Next" da" im Zen).
+Fallback bleibt die Textsuche; der Line-Reset-Listener (`NEXT_LABEL_RE`) erkennt die testid ebenfalls.
+Extension `chessable-fen.js` + Userscript.
+
 ## Extension-Architektur (`extension/`)
 
 ```

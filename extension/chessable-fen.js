@@ -523,7 +523,8 @@
       const t = (el.textContent || '').trim()
         || (el.getAttribute('aria-label') || '').trim()
         || (el.getAttribute('title') || '').trim();
-      if (NEXT_LABEL_RE.test(t) || el.id === 'repcheck-zen-next') resetLineFeedback();
+      if (NEXT_LABEL_RE.test(t) || el.id === 'repcheck-zen-next'
+        || el.getAttribute('data-testid') === 'nextLessonButton') resetLineFeedback();
     }, true);
   }
 
@@ -951,13 +952,20 @@
   }
 
   function clickChessableNext(btn) {
-    const cand = [...document.querySelectorAll('button, a, [role="button"]')].find((el) => {
-      if (el.closest('#' + CONTAINER_ID)) return false;
-      const t = (el.textContent || '').trim();
-      if (!/^(next( variation| chapter| move| line)?|weiter)$/i.test(t)) return false;
-      const r = el.getBoundingClientRect();
-      return r.width > 0 && r.height > 0;
-    });
+    // Chessables Next ist [data-testid="nextLessonButton"] und traegt ZWEI Label-Spans
+    // („Next variation" not-in-mobile + „Next" not-in-desktop) → textContent ist
+    // „Next variationNext", die exakte Textsuche griff also nie. Primaer per testid
+    // (klickt auch im Zen hinterm Backdrop); Fallback bleibt die Textsuche.
+    let cand = document.querySelector('[data-testid="nextLessonButton"]');
+    if (!cand) {
+      cand = [...document.querySelectorAll('button, a, [role="button"]')].find((el) => {
+        if (el.closest('#' + CONTAINER_ID)) return false;
+        const t = (el.textContent || '').trim();
+        if (!/^(next( variation| chapter| move| line)?|weiter)$/i.test(t)) return false;
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+      });
+    }
     if (cand) cand.click();
     else flash(btn, 'Kein „Next" da', '#c62828');
   }

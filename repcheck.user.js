@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RepCheck — Opening Repertoire Deviation Checker
 // @namespace    https://github.com/kahalm/repcheck
-// @version      1.52.1
+// @version      1.53.4
 // @require      https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js
 // @description  Shows where your game deviates from your opening repertoire (chess.com + lichess, PGN files or RookHub). On chessable.com: copy/search FEN, remember a line to RookHub, show earned XP, report active training time to RookHub, read the API token.
 // @author       kahalm
@@ -3733,7 +3733,8 @@
         const t = (el.textContent || '').trim()
           || (el.getAttribute('aria-label') || '').trim()
           || (el.getAttribute('title') || '').trim();
-        if (NEXT_LABEL_RE.test(t) || el.id === 'repcheck-zen-next') resetLineFeedback();
+        if (NEXT_LABEL_RE.test(t) || el.id === 'repcheck-zen-next'
+          || el.getAttribute('data-testid') === 'nextLessonButton') resetLineFeedback();
       }, true);
     }
 
@@ -3981,13 +3982,20 @@
   }
 
   function clickChessableNext(btn) {
-      const cand = [...document.querySelectorAll('button, a, [role="button"]')].find((el) => {
-        if (el.closest('#' + CONTAINER_ID)) return false;
-        const t = (el.textContent || '').trim();
-        if (!/^(next( variation| chapter| move| line)?|weiter)$/i.test(t)) return false;
-        const r = el.getBoundingClientRect();
-        return r.width > 0 && r.height > 0;
-      });
+      // Chessables Next ist [data-testid="nextLessonButton"] und traegt ZWEI Label-Spans
+      // („Next variation" not-in-mobile + „Next" not-in-desktop) → textContent ist
+      // „Next variationNext", die exakte Textsuche griff also nie. Primaer per testid
+      // (klickt auch im Zen hinterm Backdrop); Fallback bleibt die Textsuche.
+      let cand = document.querySelector('[data-testid="nextLessonButton"]');
+      if (!cand) {
+        cand = [...document.querySelectorAll('button, a, [role="button"]')].find((el) => {
+          if (el.closest('#' + CONTAINER_ID)) return false;
+          const t = (el.textContent || '').trim();
+          if (!/^(next( variation| chapter| move| line)?|weiter)$/i.test(t)) return false;
+          const r = el.getBoundingClientRect();
+          return r.width > 0 && r.height > 0;
+        });
+      }
       if (cand) cand.click();
       else flash(btn, 'Kein „Next" da', '#c62828');
     }
