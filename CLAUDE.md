@@ -292,6 +292,15 @@ Batches an `POST /api/extension/chessable/session-moves` (RookHub: append-only R
 bekommt KEINE Sitzungsdaten; entsprechend in PRIVACY.md/docs/privacy.md offengelegt. Userscript:
 hand-gespiegelt in `initChessableBrowserImport` (direkter `fetch`).
 
+**Zen auf dem Handy (v1.54.1):** Das Zen-Brett liegt per `position:fixed` + z-index ÜBER dem Backdrop — das
+trägt nur, wenn kein Vorfahr einen Stacking-Context/Containing-Block aufmacht (transform/filter/contain/
+container-type/will-change/positioniertes z-index/opacity<1). Chessables mobiles Layout tut das (Desktop-Kette bis
+`#root` nicht, Snapshot 08.08.) → schwarzer Bildschirm, nur unsere Buttons. `zenLiftAncestors(node)` neutralisiert
+solche Vorfahren von Brett UND Panel für die Zen-Dauer (Inline-!important, `zenRestoreAncestors` beim Verlassen);
+kein DOM-Umbau. Zweite Handy-Falle: das rechts angedockte Panel (≥280 px + 24) liess auf 390 px Breite ein ~80-px-
+Brett übrig → `zenNarrow()` (innerWidth<720 oder hochkant) dockt das Panel UNTEN an (`zenPanelPlace`, 34 vh,
+vertikale Reserve `zenReservedBottom`), kein Auto-Öffnen, Brett-Minimum 160 px. Extension + Userscript.
+
 **Cached-Count-Overlays (v1.52.0):** `annotateDom` heftet neben den ✓/○-Linien-Markern jetzt auch
 Zähl-Badges: auf `/course/{bid}` pro Kapitel `done/total` (Anker `a[href*="/course/{bid}/{lid}"]`, lid exakt
 aus dem Pfadsegment) + eine Kurs-Gesamtsumme am ersten `h1`; auf der Startseite je Kurs-Karte „🔖 N"

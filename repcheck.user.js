@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RepCheck — Opening Repertoire Deviation Checker
 // @namespace    https://github.com/kahalm/repcheck
-// @version      1.54.0
+// @version      1.54.1
 // @require      https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js
 // @description  Shows where your game deviates from your opening repertoire (chess.com + lichess, PGN files or RookHub). On chessable.com: copy/search FEN, remember a line to RookHub, show earned XP, report active training time to RookHub, read the API token.
 // @author       kahalm
@@ -3878,6 +3878,8 @@
     let zenPanelBtnRef = null;
     let zenPanelEl = null;
     let zenPanelPrevStyle = '';
+    /** Vorfahren, deren Stacking-Context/Containing-Block fürs Zen neutralisiert wurde: [{el, prev}]. */
+    let zenLifted = [];
 
     function zenTarget() {
       return document.getElementById('board')
@@ -3915,12 +3917,58 @@
       return document.getElementById('drawings');
     }
 
+    /**
+     * Brett (und Panel) liegen im Zen per position:fixed + z-index ÜBER dem Backdrop. Das trägt nur,
+     * wenn KEIN Vorfahr einen eigenen Stacking-Context/Containing-Block aufmacht (transform, filter,
+     * contain, container-type, will-change, positioniertes z-index, opacity<1, …). Sonst bleibt das
+     * Brett in diesem Vorfahren gefangen: sein z-index gilt nur dort, das Backdrop (Kind von body) liegt
+     * darüber → schwarzer Bildschirm, nur unsere Buttons sichtbar (Handy, 2026-08). Die Desktop-Kette
+     * bis #root ist frei davon (Snapshot 08.08.), Chessables mobiles Layout nicht. Solche Vorfahren
+     * werden für die Dauer des Zen neutralisiert (Inline-!important, beim Verlassen zurückgesetzt) —
+     * die Layout-Verschiebung darunter deckt das Backdrop ohnehin ab. Kein DOM-Umbau (React!).
+     */
+    function zenLiftAncestors(node) {
+      for (let el = node && node.parentElement; el && el !== document.body && el !== document.documentElement; el = el.parentElement) {
+        if (zenLifted.some((x) => x.el === el)) continue;
+        const cs = getComputedStyle(el);
+        const traps = cs.transform !== 'none' || cs.perspective !== 'none' || cs.filter !== 'none'
+          || (cs.backdropFilter && cs.backdropFilter !== 'none')
+          || (cs.contain && cs.contain !== 'none')
+          || (cs.containerType && cs.containerType !== 'normal')
+          || /transform|perspective|filter|contain/.test(cs.willChange || '')
+          || (cs.zIndex !== 'auto' && cs.position !== 'static')
+          || parseFloat(cs.opacity) < 1
+          || cs.isolation === 'isolate'
+          || (cs.mixBlendMode && cs.mixBlendMode !== 'normal')
+          || (cs.clipPath && cs.clipPath !== 'none')
+          || (cs.maskImage && cs.maskImage !== 'none');
+        if (!traps) continue;
+        zenLifted.push({ el, prev: el.getAttribute('style') });
+        const st = el.style;
+        for (const [p, v] of [['transform', 'none'], ['perspective', 'none'], ['filter', 'none'],
+          ['backdrop-filter', 'none'], ['contain', 'none'], ['container-type', 'normal'], ['will-change', 'auto'],
+          ['z-index', 'auto'], ['opacity', '1'], ['isolation', 'auto'], ['mix-blend-mode', 'normal'],
+          ['clip-path', 'none'], ['mask-image', 'none']]) {
+          st.setProperty(p, v, 'important');
+        }
+      }
+    }
+
+    function zenRestoreAncestors() {
+      for (const { el, prev } of zenLifted) {
+        if (prev) el.setAttribute('style', prev);
+        else el.removeAttribute('style');
+      }
+      zenLifted = [];
+    }
+
     function enterZen(btn) {
       const board = zenTarget();
       const rect = board && board.getBoundingClientRect();
       if (!board || !rect || !rect.width) { flash(btn, 'No board found', '#c62828'); return; }
       zenBoard = board;
       zenPrevStyle = board.getAttribute('style') || '';
+      zenLiftAncestors(board);
       const backdrop = document.createElement('div');
       backdrop.id = ZEN_BACKDROP_ID;
       Object.assign(backdrop.style, { position: 'fixed', inset: '0', background: '#111', zIndex: '2147483600' });
@@ -3942,7 +3990,11 @@
         // Offenes Panel reserviert rechts Platz: das Brett wird entsprechend kleiner UND um
         // die halbe Reserve nach links gerückt, statt sich mit dem Panel zu überlappen.
         const reserve = zenReservedRight();
-        const target = Math.floor(0.97 * Math.min(window.innerWidth - reserve, window.innerHeight));
+        const reserveBottom = zenReservedBottom();
+        // Nie unter ein bedienbares Minimum: ein rechts angedocktes Panel liess auf dem Handy
+        // (390 px breit, 304 px Reserve) ein Brett von ~80 px uebrig.
+        const target = Math.max(160, Math.floor(0.97 * Math.min(window.innerWidth - reserve, window.innerHeight - reserveBottom)));
+        if (zenPanelEl) zenPanelPlace(zenPanelEl);   // Geometrie folgt Drehung/Resize
         // !important, weil Chessables eigener Resize-Handler style.width neu
         // setzt (fit-height-Berechnung): unsere Größe muss gewinnen — sein
         // board.resize() liest danach die tatsächliche (= unsere) Breite und
@@ -3950,7 +4002,7 @@
         const s = zenBoard.style;
         s.setProperty('position', 'fixed', 'important');
         s.setProperty('left', `calc(50% - ${Math.round(reserve / 2)}px)`, 'important');
-        s.setProperty('top', '50%', 'important');
+        s.setProperty('top', `calc(50% - ${Math.round(reserveBottom / 2)}px)`, 'important');
         s.setProperty('margin', '0', 'important');
         s.setProperty('transform', 'translate(-50%, -50%)', 'important');
         s.setProperty('z-index', '2147483610', 'important');
@@ -3966,7 +4018,7 @@
           const ds = dr.style;
           ds.setProperty('position', 'fixed', 'important');
           ds.setProperty('left', `calc(50% - ${Math.round(reserve / 2)}px)`, 'important');
-          ds.setProperty('top', '50%', 'important');
+          ds.setProperty('top', `calc(50% - ${Math.round(reserveBottom / 2)}px)`, 'important');
           ds.setProperty('margin', '0', 'important');
           ds.setProperty('transform', 'translate(-50%, -50%)', 'important');
           ds.setProperty('z-index', '2147483611', 'important');   // knapp ueber dem Brett
@@ -3979,7 +4031,7 @@
       // Kommentare/Züge standardmäßig AN: im Vollbild ist der freie Platz daneben sonst
       // ungenutzt, und genau diese Spalte will man beim Durcharbeiten sehen. 💬 schaltet sie
       // wieder aus. Nach zenRescale, damit die Brettbreite für die Spaltenbreite schon steht.
-      zenPanelShow(null, true);
+      if (!zenNarrow()) zenPanelShow(null, true);   // Handy: Platz reicht nicht fuer beides
       window.addEventListener('resize', zenRescale);
       if (document.documentElement.requestFullscreen) {
         document.documentElement.requestFullscreen().catch(() => {});
@@ -4011,6 +4063,7 @@
       }
       // Chessable-Layout zurück auf Normalgröße rechnen lassen (board.resize()).
       window.dispatchEvent(new Event('resize'));
+      zenRestoreAncestors();
       if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
       updateZenButton();
     }
@@ -4083,9 +4136,46 @@
       return Math.round(Math.min(460, Math.max(280, window.innerWidth * 0.24)));
     }
 
-    /** Platz, den das offene Panel rechts belegt (inkl. Abstand) — 0, wenn es zu ist. */
+    /** Schmal/hochkant (Handy): das Panel passt nicht NEBEN ein brauchbares Brett → es dockt unten an. */
+    function zenNarrow() { return window.innerWidth < 720 || window.innerWidth < window.innerHeight; }
+    function zenPanelHeightNarrow() { return Math.round(window.innerHeight * 0.34); }
+
+    /** Platz, den das offene Panel rechts belegt (inkl. Abstand) — 0, wenn es zu ist oder unten sitzt. */
     function zenReservedRight() {
-      return zenPanelEl ? zenPanelWidth() + 24 : 0;
+      return zenPanelEl && !zenNarrow() ? zenPanelWidth() + 24 : 0;
+    }
+    /** Platz, den das offene Panel UNTEN belegt (nur schmal/hochkant). */
+    function zenReservedBottom() {
+      return zenPanelEl && zenNarrow() ? zenPanelHeightNarrow() + 24 : 0;
+    }
+
+    /** Panel-Geometrie — rechts neben dem Brett (breit) bzw. unten drunter (schmal/hochkant). */
+    function zenPanelPlace(panel) {
+      const s = panel.style;
+      s.setProperty('position', 'fixed', 'important');
+      if (zenNarrow()) {
+        s.setProperty('left', '12px', 'important');
+        s.setProperty('right', '12px', 'important');
+        s.setProperty('bottom', '12px', 'important');
+        s.setProperty('top', 'auto', 'important');
+        s.setProperty('transform', 'none', 'important');
+        s.setProperty('width', 'auto', 'important');
+        s.setProperty('max-height', zenPanelHeightNarrow() + 'px', 'important');
+      } else {
+        s.setProperty('top', '50%', 'important');
+        s.setProperty('right', '12px', 'important');
+        s.setProperty('left', 'auto', 'important');
+        s.setProperty('bottom', 'auto', 'important');
+        s.setProperty('transform', 'translateY(-50%)', 'important');
+        s.setProperty('width', zenPanelWidth() + 'px', 'important');
+        s.setProperty('max-height', '92vh', 'important');
+      }
+      s.setProperty('overflow-y', 'auto', 'important');
+      s.setProperty('z-index', '2147483615', 'important');
+      s.setProperty('margin', '0', 'important');
+      s.setProperty('padding', '12px', 'important');
+      s.setProperty('border-radius', '10px', 'important');
+      s.setProperty('box-shadow', '0 4px 24px rgba(0,0,0,0.5)', 'important');
     }
 
     function zenPanelShow(btn, silent) {
@@ -4095,20 +4185,9 @@
       if (!panel) { if (!silent) flash(btn, 'Kein Panel gefunden', '#c62828'); return; }
       zenPanelEl = panel;
       zenPanelPrevStyle = panel.getAttribute('style') || '';
-      const w = zenPanelWidth();
       const s = panel.style;
-      s.setProperty('position', 'fixed', 'important');
-      s.setProperty('top', '50%', 'important');
-      s.setProperty('right', '12px', 'important');
-      s.setProperty('transform', 'translateY(-50%)', 'important');
-      s.setProperty('width', w + 'px', 'important');
-      s.setProperty('max-height', '92vh', 'important');
-      s.setProperty('overflow-y', 'auto', 'important');
-      s.setProperty('z-index', '2147483615', 'important');
-      s.setProperty('margin', '0', 'important');
-      s.setProperty('padding', '12px', 'important');
-      s.setProperty('border-radius', '10px', 'important');
-      s.setProperty('box-shadow', '0 4px 24px rgba(0,0,0,0.5)', 'important');
+      zenLiftAncestors(panel);   // dieselbe Stacking-Context-Falle wie beim Brett
+      zenPanelPlace(panel);
       // Transparente Panels bekommen auf dem dunklen Backdrop einen zur
       // Textfarbe passenden Grund (helle Schrift → dunkel, dunkle → hell).
       const cs = getComputedStyle(panel);
