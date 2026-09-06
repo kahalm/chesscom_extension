@@ -83,12 +83,47 @@ Neue Plattform hinzufügen = neuen Adapter-Eintrag in beide Dateien einfügen. R
 
 Die Extension kann das Repertoire wahlweise aus einem **lokalen Ordner** (File System Access API / File Input) ODER aus einer **RookHub-Instanz** laden. Bei RookHub bleibt das Repertoire-PGN seit v1.6.0 auf dem Server — der Client schickt die SAN-Zugliste der aktuellen Partie, der Server liefert ply-weise Annotationen zurueck.
 
-### Setup
+### Setup (Extension, ab v1.55.0)
+Popup → **„Einstellungen"** (geht auf JEDEM Tab, auch auf chessable.com oder einem leeren Tab)
+→ **„🔗 Mit RookHub verbinden"**. Der Background-Worker öffnet dazu einen RookHub-Tab
+(offenen wiederverwendend, sonst unsichtbar im Hintergrund), wartet ggf. auf die Anmeldung und legt
+sich den `rkh_`-Token über `POST /api/profile/tokens` selbst an — kein Copy&Paste. Details unter
+„Ein-Klick-Verbindung". Rückfall für Selbsthoster/Sonderfälle: „Token von Hand eintragen" im selben
+Aufklapper (URL + `rkh_…` aus **Profil → Extension-Tokens**).
+
+**Warum das so wichtig ist**: bis v1.54.x gab es die Eingabe NUR im seiten-injizierten Panel, und
+das lebt nur auf chess.com/lichess. Wer die Extension für Chessable installiert hatte, musste erst
+chess.com aufrufen, um sie überhaupt verbinden zu können. Die Verbindung darf deshalb nie wieder an
+einer Site hängen — `test/rookhub-connect.test.js` hält das fest.
+
+### Setup (Userscript)
 1. In RookHub einloggen → **Profil → „Extension-Tokens"** → „Token erstellen" (Scope `extension`, Ablauf optional). Raw-Token erscheint einmalig — kopieren.
-2. Auf chess.com **oder lichess.org** im Repertoire-Settings-Panel (Zahnrad):
+2. Auf chess.com, lichess.org **oder chessable.com** im Repertoire-Settings-Panel (Zahnrad):
    - **URL**: z. B. `https://rookhub.example.com` (ohne trailing slash; Protokoll http/https, der userscript respektiert beides).
    - **Token**: `rkh_…` aus dem Profil.
-3. „Verbinden" → URL+Token werden in IndexedDB (`RepertoireCheckerDB` / `rookhub` Store) gespeichert. Ein einmaliger `POST /api/extension/analyze-game` mit leerer Zugliste verifiziert Auth und meldet die Anzahl gefundener Opening-Dateien.
+3. „Verbinden" → URL landet in IndexedDB (`RepertoireCheckerDB` / `rookhub` Store), der Token im GM-Storage. Ein einmaliger `POST /api/extension/analyze-game` mit leerer Zugliste verifiziert Auth und meldet die Anzahl gefundener Opening-Dateien.
+
+### Ein-Klick-Verbindung (nur Extension, v1.55.0+)
+Ablauf in `background.js` (`pairStart` → `pairAttempt`), Zustand in `chrome.storage.local`
+(`rookhubPairing`), Bedien-Oberfläche im Popup (`#rookhub-conn`):
+1. Popup schickt `{type:'rookhub-pair', url}`; die URL wird normalisiert (Schema ergänzt, Slash weg,
+   Klartext-HTTP nur für localhost) und **vor** dem ersten Fetch als `rookhubConfig.url` abgelegt —
+   daran hängt die Egress-Allowlist des Proxys.
+2. Offener RookHub-Tab wird wiederverwendet, sonst einer mit `active:false` geöffnet.
+3. Pro Anlauf: Tab-URL gegen die Ziel-Origin prüfen → `chrome.scripting.executeScript` liest
+   `localStorage['rookhub_user'].token` (das Anmelde-JWT der RookHub-SPA) → `POST /api/profile/tokens`
+   (`{name:'RepCheck (<Browser>)', scope:'extension'}`) → `rookhubConfig = {url, token}`.
+4. Kein/abgelaufenes JWT → Zustand `waitingLogin`, Tab kommt nach vorn; nach der Anmeldung weckt
+   `tabs.onUpdated` den nächsten Anlauf. Das **Popup ist dann längst zu** — deshalb liegt der Ablauf
+   im Worker und nicht im Popup, und deshalb steht der Zustand im Storage und nicht im Speicher.
+5. Erfolg: Badge „✓", selbst geöffneter Hintergrund-Tab wird geschlossen. **Reihenfolge beachten:**
+   erst `state:'done'` schreiben, dann den Tab schließen — sonst meldet `tabs.onRemoved` den eigenen
+   Tab-Schluss als „abgebrochen" und überschreibt den Erfolg (genau dieser Bug war da).
+6. `pairBusy` verhindert, dass Popup-Poll und `tabs.onUpdated` gleichzeitig je einen Token anlegen.
+
+Das JWT wird **nicht** gespeichert — es dient allein diesem einen POST; persistiert wird nur der
+`rkh_`-Token (extension-privat). Gelesen wird es nur nach ausdrücklichem Klick und nur aus einem Tab,
+dessen Origin zur eingetragenen RookHub-Adresse passt.
 
 ### Verhalten
 - **Pro Review-Page** ein `POST /api/extension/analyze-game` mit `{ moves, kind, refresh }`. Antwort: `{ deviation, gaps, inRepertoire, fenBeforeDeviation, repertoireFileCount, illegalMoveAt }`. Der Move-Cache (`lastGameMovesKey`) verhindert Redundanz-Requests, wenn sich die Zugliste nicht aendert.
@@ -329,7 +364,7 @@ extension/
 ├── chessable-fen.js      # Content-Script (world: "MAIN") auf chessable.com: FEN-Copy/Search-Buttons + XP-Anzeige
 ├── lib/chessable-course-names.js # geteilter Kern der Kursnamen-Auflösung (uid-Decode + getHomeData-Parsing + isNavLabel), Node-getestet; wird per Manifest in BEIDEN chessable-Welten geladen (isoliert vor chessable-activity.js, MAIN vor chessable-fen.js) → `self.RepCheckCourseNames`; ins Userscript kopiert der Build (Sentinel `>>>REPCHECK-SHARED:chessable-course-names`). Keine Inline-Kopien mehr — test/chessable-course-names.test.js hält das fest
 ├── background.js       # Service-Worker, proxied RookHub-Fetches (CORS-frei)
-├── popup.html / .js    # Toolbar-Button: Cache-Status + „Chessable-Token kopieren" + Sharebar + RookHub-Import (Browser) auf chessable.com [Ziel/Crawl/Mitschnitt/Live/Fortschritt, pollt chessable-activity.js per rc-import; Extension-only] + Chessable-Button-Einstellungen [chrome.storage.local `chessableButtons`, pro Button ein-/ausblendbar]. „Einstellungen"-Knopf: chess.com/lichess → In-Page-Panel (openSettings), sonst (chessable) → klappt die Chessable-Button-Toggles hier im Popup auf
+├── popup.html / .js    # Toolbar-Button: Cache-Status + „Chessable-Token kopieren" + Sharebar + RookHub-Import (Browser) auf chessable.com [Ziel/Crawl/Mitschnitt/Live/Fortschritt, pollt chessable-activity.js per rc-import; Extension-only] + Chessable-Button-Einstellungen [chrome.storage.local `chessableButtons`, pro Button ein-/ausblendbar]. „Einstellungen"-Knopf klappt seit v1.55.0 IMMER die Popup-Einstellungen auf (`#settings-box`): RookHub-Verbindung [1-Klick-Verbinden + Rückfall „Token von Hand"] + Chessable-Buttons + auf chess.com/lichess zusätzlich „Ordner / PGN auf der Seite…" → In-Page-Panel (openSettings)
 ├── icons/              # 16/48/128 PNG
 ├── generate-icons.py   # Placeholder-Generator (Pillow)
 └── web-ext-config.cjs  # web-ext-CLI-Konfig (Firefox/Chromium-Test)
@@ -362,6 +397,7 @@ Security-Review-Härtungen. Beim Ändern der betroffenen Stellen bitte bewusst b
 - **RookHub-Token NIE ins seiten-lesbare IndexedDB.** Content-Scripts teilen die IndexedDB des Page-Origins (chess.com/lichess) → dort abgelegte Secrets sind für Host-/XSS-Skripte lesbar. Der Token liegt daher extension-privat in `chrome.storage.local` (Key `rookhubConfig`) bzw. Tampermonkey-GM-Storage; im IDB-Store `rookhub/config` steht **nur die URL**. `loadRookhubConfig()` liest den Token aus dem privaten Store (mit einmaliger Legacy-Migration aus altem IDB-Token), `saveRookhubConfig()` schreibt ins IDB nur `{ url }`. Gilt für Extension UND Userscript.
 - **MAIN↔isoliert postMessage-Bridge** (`chessable-fen.js` ↔ `chessable-activity.js`): Empfänger prüfen `e.source === window` **UND** `e.origin === location.origin`. Rest-Risiko (same-origin Page-Skript könnte Bridge-Messages fälschen) ist bewusst akzeptiert — der Token bleibt aus dem Page-Kontext heraus, Impact wäre nur Daten-Injection, kein Token-Diebstahl. Ein Handshake-Nonce hilft hier nicht robust (MAIN-World ist page-beobachtbar).
 - **Background-Egress** (`background.js`): nur `type:'rookhub-fetch'` von `sender.id === chrome.runtime.id`, Ziel-Origin MUSS = `rookhubConfig.url`-Origin, **HTTPS-only** (http nur für `localhost`/`127.0.0.1`), `credentials:'omit'`. Kein offener Proxy.
+- **Ein-Klick-Verbindung** (`background.js` `pairAttempt`): das RookHub-JWT wird nur nach ausdrücklichem Nutzer-Klick, nur aus einem Tab mit passender Ziel-Origin gelesen, nie gespeichert und nur für den einen `POST /api/profile/tokens` verwendet. Persistiert wird ausschliesslich der zurueckgegebene `rkh_`-Token — extension-privat wie bisher. Der Token wird im Popup (Extension-Origin) eingegeben, nicht mehr im Seiten-DOM.
 - **Manifest `host_permissions`**: `https://*/*` + `http://localhost|127.0.0.1` (kein `http://*/*` — verhindert Klartext-Token-Egress + reduziert Store-Review-Reibung).
 - **Packaging**: `web-ext-config.cjs` `ignoreFiles` hält Dev-/CI-Skripte (`*.mjs` CWS-OAuth-Helfer, `*.ps1`) und `web-ext-artifacts/**` aus dem ausgelieferten Paket.
 

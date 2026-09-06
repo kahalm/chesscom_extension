@@ -20,7 +20,7 @@ Beide bieten identische Funktionalität und teilen sich denselben IndexedDB-Layo
   - Lokaler Ordner (File System Access API in Chrome/Edge, File-Input-Fallback in Firefox)
   - PGN paste
   - RookHub-Server (Eröffnungs-Repertoires gefiltert, mit Auth-Token)
-- **Settings-Panel** im Repertoire-Banner (⚙-Icon) für URL/Token/Refresh
+- **RookHub-Verbindung im Popup** (ab v1.55.0, Extension): „Einstellungen" → „🔗 Mit RookHub verbinden" — auf jedem Tab erreichbar, holt sich den Zugriffs-Token über die RookHub-Anmeldung selbst; „Token von Hand eintragen" bleibt als Rückfall. Userscript: Settings-Panel im Repertoire-Banner (⚙-Icon) für URL/Token/Refresh
 - **Cache** in IndexedDB — Re-Open der chess.com-Seite zeigt sofort den letzten Stand, Refresh läuft im Hintergrund
 - **Soft-Limit-Warnung** bei > 5 MB Gesamtgröße der Repertoires
 - **Chessable-FEN-Tools** (ab v1.9.0): auf `chessable.com` zwei Knöpfe unten rechts — **Copy FEN** (aktuelle Brettstellung in die Zwischenablage) und **Search FEN** (öffnet die Chessable-FEN-Suche der Stellung) — plus Anzeige der zuletzt erspielten **XP**
@@ -48,17 +48,24 @@ Die FEN wird bevorzugt aus dem internen React-State von Chessable gelesen (korre
 
 ## Setup für die Browser-Extension
 
-### Voraussetzung: RookHub-Token erstellen
+### Mit RookHub verbinden
 
+**Extension (ab v1.55.0)**: RepCheck-Symbol in der Symbolleiste → **„Einstellungen"** → **„🔗 Mit RookHub verbinden"**.
+Das geht auf jedem Tab (auch auf chessable.com). RepCheck öffnet dazu RookHub, wartet — falls nötig — auf
+deine Anmeldung und legt den Zugriffs-Token selbst an; er taucht in RookHub unter **Profil →
+Extension-Tokens** als „RepCheck (Chrome/Firefox)" auf und ist dort jederzeit widerrufbar.
+
+**Von Hand (Userscript, Selbsthoster, Sonderfälle)**:
 1. In RookHub einloggen → **Profil → „Extension-Tokens"** → „Token erstellen" (Scope `extension`).
 2. Den Raw-Token (`rkh_…`) **einmalig** beim Anlegen kopieren.
+3. Extension: „Einstellungen" → „Token von Hand eintragen" · Userscript: ⚙ im Repertoire-Banner.
 
 ### Lokale Entwicklung / temporäres Testen
 
 **Chrome / Edge / Brave**:
 1. `chrome://extensions/` aufrufen → „Entwicklermodus" aktivieren
 2. „Entpackte Erweiterung laden" → `extension/`-Ordner wählen
-3. Auf chess.com oder lichess.org gehen, im Repertoire-Banner das ⚙-Icon klicken, RookHub-URL + Token eintragen, „Verbinden"
+3. Auf das RepCheck-Symbol in der Symbolleiste klicken → „Einstellungen" → „🔗 Mit RookHub verbinden" (geht auf jedem Tab; die Extension holt sich den Zugriffs-Token über die RookHub-Anmeldung selbst). Alternativ im selben Aufklapper „Token von Hand eintragen".
 
 **Firefox**:
 1. `about:debugging#/runtime/this-firefox` → „Temporäres Add-on laden" → `extension/manifest.json` wählen

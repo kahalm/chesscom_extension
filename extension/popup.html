@@ -25,6 +25,13 @@
   button.secondary { flex: 1; }
   button.primary.ci-cancel { background: #c62828; border-color: #c62828; }
   button.primary.ci-cancel:hover { background: #d84343; }
+  .conn-input { width: 100%; box-sizing: border-box; font-size: 12px; padding: 5px 6px; border: 1px solid #ccc; border-radius: 4px; background: #fff; color: #222; margin-bottom: 6px; }
+  .conn-hint { display: block; font-size: 11px; color: #7a8a9a; margin: 4px 0 0 0; }
+  .conn-state { font-size: 11px; color: #2c3e50; margin-bottom: 6px; min-height: 1.1em; }
+  .conn-wide { width: 100%; }
+  #rookhub-conn { max-height: none; }
+  #conn-manual { margin-top: 8px; }
+  #conn-manual summary { font-size: 11px; color: #1976d2; cursor: pointer; margin-bottom: 6px; }
 </style>
 </head>
 <body>
@@ -62,7 +69,24 @@
   <div id="ci-progress" style="font-size:12px;color:#2c3e50;margin-bottom:4px;"></div>
   <div id="ci-status" style="font-size:11px;color:#2a8c4a;min-height:1.1em;"></div>
 </div>
-<div id="chessable-settings" class="repertoires" style="display:none;">
+<div id="settings-box" style="display:none;">
+<div id="rookhub-conn" class="repertoires">
+  <div class="heading" data-i18n="popup.conn.heading">RookHub-Verbindung</div>
+  <div id="conn-state" class="conn-state"></div>
+  <input id="conn-url" class="conn-input" placeholder="https://rookhub.example.com" spellcheck="false" autocomplete="off" />
+  <button id="conn-pair" class="primary conn-wide" data-i18n="popup.conn.pair">🔗 Mit RookHub verbinden</button>
+  <span class="conn-hint" data-i18n="popup.conn.pairHint">Öffnet RookHub, wartet auf deine Anmeldung und legt den Zugriffs-Token selbst an.</span>
+  <details id="conn-manual">
+    <summary data-i18n="popup.conn.manual">Token von Hand eintragen</summary>
+    <input id="conn-token" class="conn-input" type="password" placeholder="rkh_…" autocomplete="off" />
+    <div class="row" style="margin:0;">
+      <button id="conn-save" class="secondary" data-i18n="popup.conn.save">Speichern</button>
+      <button id="conn-forget" class="secondary" data-i18n="popup.conn.forget">Trennen</button>
+    </div>
+    <a id="conn-tokens" href="#" target="_blank" rel="noopener" class="conn-hint" data-i18n="popup.conn.tokens">Tokens in RookHub verwalten ↗</a>
+  </details>
+</div>
+<div id="chessable-settings" class="repertoires">
   <div class="heading" data-i18n="popup.buttons.heading">Chessable-Buttons</div>
   <div style="font-size:11px;color:#7a8a9a;margin-bottom:6px;" data-i18n="popup.buttons.intro">Welche Buttons unten rechts auf chessable.com (Practice-Modus) erscheinen.</div>
   <label style="display:block;margin-bottom:3px;"><input type="checkbox" id="cb-copyFen" checked> Copy FEN</label>
@@ -71,6 +95,10 @@
   <label style="display:block;margin-bottom:3px;"><input type="checkbox" id="cb-refresh" checked> Refresh</label>
   <label style="display:block;margin-bottom:3px;"><input type="checkbox" id="cb-remember" checked> Remember line</label>
   <label style="display:block;margin-bottom:3px;"><input type="checkbox" id="cb-fullscreen" checked> <span data-i18n="popup.buttons.fullscreen">Vollbild</span></label>
+</div>
+<div class="row" id="page-panel-row" style="display:none;">
+  <button id="open-page-panel" class="secondary" style="flex:1;" data-i18n="popup.conn.pagePanel">Ordner / PGN auf der Seite…</button>
+</div>
 </div>
 <div class="hint" id="error-hint" style="display:none;color:#b71c1c;"></div>
 <div class="hint">
